@@ -1,0 +1,382 @@
+{
+  "tile_modes": {
+    "vine": {
+      "type": "contextual_vertical",
+      "description": "Vines hang downward and connect to solid blocks above",
+      "connects_to": ["vine", "solid"],
+      "sprite_layout": {
+        "single": {
+          "x": 0,
+          "y": 0,
+          "width": 16,
+          "height": 16,
+          "description": "Single vine piece, not connected to anything"
+        },
+        "top": {
+          "x": 16,
+          "y": 0,
+          "width": 16,
+          "height": 24,
+          "description": "Top of vine, hangs down from solid block"
+        },
+        "middle": {
+          "x": 0,
+          "y": 16,
+          "width": 16,
+          "height": 16,
+          "description": "Middle section of vine"
+        },
+        "bottom": {
+          "x": 32,
+          "y": 0,
+          "width": 16,
+          "height": 16,
+          "description": "Bottom end of vine"
+        }
+      }
+    },
+    "cactus": {
+      "type": "contextual_vertical",
+      "description": "Cactus grows upward and connects to other cactus blocks",
+      "connects_to": ["cactus"],
+      "sprite_layout": {
+        "single": {
+          "x": 0,
+          "y": 0,
+          "width": 16,
+          "height": 24,
+          "description": "Single cactus block"
+        },
+        "top": {
+          "x": 0,
+          "y": 0,
+          "width": 16,
+          "height": 16,
+          "description": "Top of cactus column"
+        },
+        "middle": {
+          "x": 0,
+          "y": 24,
+          "width": 16,
+          "height": 16,
+          "description": "Middle section of cactus"
+        },
+        "bottom": {
+          "x": 0,
+          "y": 16,
+          "width": 16,
+          "height": 8,
+          "description": "Bottom of cactus with roots"
+        }
+      }
+    },
+    "platform": {
+      "type": "contextual_horizontal",
+      "description": "Platform blocks connect horizontally",
+      "connects_to": ["platform"],
+      "sprite_layout": {
+        "single": {
+          "x": 0,
+          "y": 0,
+          "width": 16,
+          "height": 16,
+          "description": "Single platform block"
+        },
+        "left_end": {
+          "x": 16,
+          "y": 0,
+          "width": 16,
+          "height": 16,
+          "description": "Left end of platform"
+        },
+        "middle": {
+          "x": 32,
+          "y": 0,
+          "width": 16,
+          "height": 16,
+          "description": "Middle section of platform"
+        },
+        "right_end": {
+          "x": 48,
+          "y": 0,
+          "width": 16,
+          "height": 16,
+          "description": "Right end of platform"
+        }
+      }
+    },
+    "fence": {
+      "type": "contextual_horizontal",
+      "description": "Fence blocks connect horizontally",
+      "connects_to": ["fence"],
+      "sprite_layout": {
+        "single": {
+          "x": 32,
+          "y": 0,
+          "width": 16,
+          "height": 32,
+          "description": "Single fence post"
+        },
+        "left_end": {
+          "x": 0,
+          "y": 0,
+          "width": 16,
+          "height": 32,
+          "description": "Left end of fence"
+        },
+        "middle": {
+          "x": 48,
+          "y": 0,
+          "width": 16,
+          "height": 32,
+          "description": "Middle section of fence"
+        },
+        "right_end": {
+          "x": 16,
+          "y": 0,
+          "width": 16,
+          "height": 32,
+          "description": "Right end of fence"
+        }
+      }
+    },
+    "pipe": {
+      "type": "contextual_all_directions",
+      "description": "Pipes connect in all four directions",
+      "connects_to": ["pipe"],
+      "sprite_layout": {
+        "single": {
+          "x": 0,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        },
+        "horizontal": {
+          "x": 16,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        },
+        "vertical": {
+          "x": 32,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        },
+        "corner_top_left": {
+          "x": 48,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        },
+        "corner_top_right": {
+          "x": 64,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        },
+        "corner_bottom_left": {
+          "x": 48,
+          "y": 16,
+          "width": 16,
+          "height": 16
+        },
+        "corner_bottom_right": {
+          "x": 64,
+          "y": 16,
+          "width": 16,
+          "height": 16
+        },
+        "t_junction_up": {
+          "x": 0,
+          "y": 16,
+          "width": 16,
+          "height": 16
+        },
+        "t_junction_down": {
+          "x": 16,
+          "y": 16,
+          "width": 16,
+          "height": 16
+        },
+        "t_junction_left": {
+          "x": 32,
+          "y": 16,
+          "width": 16,
+          "height": 16
+        },
+        "t_junction_right": {
+          "x": 0,
+          "y": 32,
+          "width": 16,
+          "height": 16
+        },
+        "cross": {
+          "x": 16,
+          "y": 32,
+          "width": 16,
+          "height": 16
+        }
+      }
+    },
+    "connected_blocks": {
+      "type": "autotile_47",
+      "description": "Blocks that use 47-tile autotiling system",
+      "connects_to": ["self"],
+      "sprite_layout": {
+        "pattern_size": 16,
+        "sheet_width": 112,
+        "sheet_height": 80,
+        "description": "Uses complex 47-tile pattern matching"
+      }
+    },
+    "2state": {
+      "type": "multi_state",
+      "description": "Blocks with 2 different states",
+      "state_count": 2,
+      "sprite_layout": {
+        "state_0": {
+          "x": 0,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        },
+        "state_1": {
+          "x": 16,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        }
+      }
+    },
+    "4state": {
+      "type": "multi_state",
+      "description": "Blocks with 4 different states",
+      "state_count": 4,
+      "sprite_layout": {
+        "state_0": {
+          "x": 0,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        },
+        "state_1": {
+          "x": 16,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        },
+        "state_2": {
+          "x": 32,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        },
+        "state_3": {
+          "x": 48,
+          "y": 0,
+          "width": 16,
+          "height": 16
+        }
+      }
+    },
+    "standard": {
+      "type": "none",
+      "description": "Standard single-sprite blocks with no special tiling",
+      "sprite_layout": {
+        "single": {
+          "x": 0,
+          "y": 0,
+          "width": 16,
+          "height": 16,
+          "description": "Single sprite, no variations"
+        }
+      }
+    }
+  },
+  "block_types": {
+    "vine": "vine",
+    "ivy": "vine",
+    "glowingvines": "vine",
+    "creeper": "vine",
+    "hanging": "vine",
+    "cactus": "cactus",
+    "bamboo": "cactus",
+    "platform": "platform",
+    "ledge": "platform",
+    "fence": "fence",
+    "gate": "fence",
+    "pipe": "pipe",
+    "tube": "pipe",
+    "wire": "pipe",
+    "dirt": "connected_blocks",
+    "stone": "connected_blocks",
+    "wood": "connected_blocks",
+    "brick": "connected_blocks",
+    "water": "connected_blocks",
+    "lava": "connected_blocks",
+    "sand": "connected_blocks",
+    "grass": "connected_blocks",
+    "cobblestone": "connected_blocks"
+  },
+  "solid_blocks": [
+    "dirt",
+    "stone",
+    "wood",
+    "brick",
+    "cobblestone",
+    "sand",
+    "grass",
+    "clay",
+    "obsidian",
+    "chest",
+    "door",
+    "platform"
+  ],
+  "sprite_detection_patterns": {
+    "vine_patterns": [
+      "vine",
+      "ivy",
+      "creeper",
+      "hanging",
+      "tendril"
+    ],
+    "cactus_patterns": [
+      "cactus",
+      "bamboo",
+      "reed",
+      "vertical"
+    ],
+    "platform_patterns": [
+      "platform",
+      "ledge",
+      "bridge"
+    ],
+    "fence_patterns": [
+      "fence",
+      "gate",
+      "rail",
+      "barrier"
+    ],
+    "connected_block_patterns": [
+      "dirt",
+      "stone",
+      "wood",
+      "brick",
+      "water",
+      "lava",
+      "sand",
+      "grass"
+    ]
+  },
+  "directory_mappings": {
+    "spritesSORTED/connectables/greenery/down": "vine",
+    "spritesSORTED/connectables/greenery/up": "cactus",
+    "spritesSORTED/connectables/platforms": "platform",
+    "spritesSORTED/connectables/fences": "fence",
+    "spritesSORTED/connectables/blocks": "connected_blocks",
+    "spritesSORTED/2state": "2state",
+    "spritesSORTED/4state": "4state",
+    "spritesSORTED/1state": "standard"
+  }
+}
