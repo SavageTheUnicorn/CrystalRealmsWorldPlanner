@@ -11,5 +11,3 @@ I don't really plan on adding changelogs etc, I'm lazy.
 This repo is mostly to allow public PR's for improvements! (Whether or not I can/will integrate them is a different question!)
 
 Thanks for visiting!~
-
-(the latest version of the executable built by ME will always be available here)
