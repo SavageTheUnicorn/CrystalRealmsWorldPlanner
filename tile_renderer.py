@@ -416,7 +416,6 @@ class OptimizedTileRenderer:
             if border_lines:
                 pygame.draw.lines(surface, border_color, False, border_lines)
     
-    # Add optimized versions of the specialized drawing methods
     def draw_vine_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
         """Optimized vine sprite drawing"""
         neighbors = tile_info.get('neighbors', {})
@@ -454,9 +453,6 @@ class OptimizedTileRenderer:
         except Exception:
             # Emergency fallback
             self.draw_standard_sprite_optimized(surface, sprite, screen_x, screen_y, size)
-    
-    # Include other optimized specialized drawing methods from the original tile_renderer.py
-    # (I'll include a few key ones to demonstrate the pattern)
     
     def draw_log_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
         """Optimized log sprite drawing"""
@@ -501,33 +497,48 @@ class OptimizedTileRenderer:
             # Emergency fallback
             pygame.draw.rect(surface, (139, 90, 43), (screen_x - size // 2, screen_y, size * 2, size))
     
-    # ... (include other optimized methods as needed)
-    
-    # Include all the tile info calculation methods from the original
     def check_neighbor(self, world_planner, tile_x, tile_y, dx, dy, block_id, layer):
         """Check if neighbor at offset (dx, dy) has the same block ID"""
         neighbor = self.get_neighbor_block_type(world_planner, tile_x + dx, tile_y + dy, None, layer)
         return neighbor and neighbor.get('id', '') == block_id
     
-    # Copy all the tile info methods from original tile_renderer.py
     def get_all_tile_info(self, world_planner, tile_x, tile_y, block_data, layer):
-        """Get tile info for advanced tiling blocks (connectables/blocks)"""
+        """FIXED: Proper autotiling logic matching Rust implementation"""
         block_id = block_data.get('id', '')
-
-        # Check all 8 neighboring positions
+    
+        # Check the 4 orthogonal neighbors
         left = self.check_neighbor(world_planner, tile_x, tile_y, -1, 0, block_id, layer)
         right = self.check_neighbor(world_planner, tile_x, tile_y, 1, 0, block_id, layer)
         up = self.check_neighbor(world_planner, tile_x, tile_y, 0, -1, block_id, layer)
         down = self.check_neighbor(world_planner, tile_x, tile_y, 0, 1, block_id, layer)
-        up_left = self.check_neighbor(world_planner, tile_x, tile_y, -1, -1, block_id, layer)
-        up_right = self.check_neighbor(world_planner, tile_x, tile_y, 1, -1, block_id, layer)
-        down_left = self.check_neighbor(world_planner, tile_x, tile_y, -1, 1, block_id, layer)
-        down_right = self.check_neighbor(world_planner, tile_x, tile_y, 1, 1, block_id, layer)
-
-        # Alternate texture based on odd/even column and row for visual variety
+        
+        # CRITICAL: Only check diagonal neighbors when their adjacent orthogonal neighbors exist
+        # This matches the Rust logic exactly
+        up_left = False
+        up_right = False
+        down_left = False
+        down_right = False
+        
+        # Only check up_left if both up AND left neighbors exist
+        if up and left:
+            up_left = self.check_neighbor(world_planner, tile_x, tile_y, -1, -1, block_id, layer)
+        
+        # Only check up_right if both up AND right neighbors exist  
+        if up and right:
+            up_right = self.check_neighbor(world_planner, tile_x, tile_y, 1, -1, block_id, layer)
+        
+        # Only check down_left if both down AND left neighbors exist
+        if down and left:
+            down_left = self.check_neighbor(world_planner, tile_x, tile_y, -1, 1, block_id, layer)
+        
+        # Only check down_right if both down AND right neighbors exist
+        if down and right:
+            down_right = self.check_neighbor(world_planner, tile_x, tile_y, 1, 1, block_id, layer)
+    
+        # Use consistent alternation pattern (matching Rust % 2 logic)
         is_odd_column = tile_x % 2 == 1
         is_odd_row = tile_y % 2 == 1
-
+    
         return {
             'type': 'all',
             'neighbors': {
@@ -668,7 +679,7 @@ class OptimizedTileRenderer:
         }
     
     def draw_all_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
-        """Fully fixed to exactly match Rust tile layering"""
+        """FIXED: 'all' mode sprites matching the Rust implementation exactly"""
         neighbors = tile_info.get('neighbors', {})
         left = neighbors.get('left', False)
         right = neighbors.get('right', False)
@@ -681,83 +692,146 @@ class OptimizedTileRenderer:
     
         is_odd_column = tile_info.get('is_odd_column', False)
         is_odd_row = tile_info.get('is_odd_row', False)
-    
+        
+        # Create 16x24 tile surface (matches Rust implementation)
+        tile_surface = pygame.Surface((16, 24), pygame.SRCALPHA)
+        tile_surface = tile_surface.convert_alpha()
+        
+        # Calculate sprite sheet offsets (matching Rust dx, dy1, dy2, dy3)
         dx = 16 if is_odd_column else 0
         dy1 = 16 if is_odd_row else 0
         dy2 = 24 if is_odd_row else 0
         dy3 = 24 if not is_odd_row else 0
     
-        all_neighbors = all([left, right, up, down, up_left, up_right, down_left, down_right])
+        try:
+            # Check for fully surrounded tile (single sprite case)
+            all_neighbors = all([left, right, up, down, up_left, up_right, down_left, down_right])
+            
+            if all_neighbors:
+                # Single sprite for fully surrounded tiles: 128+dx, 0+dy1, 16x16 -> place at (0,8)
+                # This should NOT be stretched - use 16x16 sprite as-is
+                sprite_rect = pygame.Rect(128 + dx, 0 + dy1, 16, 16)
+                if (sprite.get_width() >= sprite_rect.right and 
+                    sprite.get_height() >= sprite_rect.bottom):
+                    single_slice = sprite.subsurface(sprite_rect)
+                    # Place the 16x16 sprite at y=8 to fill the main connection area
+                    # Don't stretch it to 16x24 - keep it as 16x16
+                    tile_surface.blit(single_slice, (0, 8))
+                else:
+                    tile_surface.fill((255, 0, 255))  # Error color
+            else:
+                # Render segments with correct positioning based on segment size
+                # 8x16 segments (corners/edges with no neighbor above) go at y=0
+                # 8x8 segments (interior with neighbor above) go at y=8 to fill bottom half
+                
+                # TOP-LEFT segment 
+                if not left and not up:
+                    # Corner: extract 8x16, place at TOP (0,0) - fills full height
+                    src_rect = pygame.Rect(0 + dx, 0 + dy2, 8, 16)
+                    dest_y = 0
+                elif not up:
+                    # Top edge: extract 8x16, place at TOP (0,0) - fills full height
+                    src_rect = pygame.Rect(32 + dx, 0 + dy2, 8, 16)
+                    dest_y = 0
+                elif not left:
+                    # Left edge: extract 8x8, place at (0,8) - fills bottom half of top area
+                    src_rect = pygame.Rect(96 + dx, 0 + dy1, 8, 8)
+                    dest_y = 8
+                elif not up_left:
+                    # Inner corner: extract 8x8, place at (0,8) - fills bottom half of top area
+                    src_rect = pygame.Rect(64 + dx, 8 + dy2, 8, 8)
+                    dest_y = 8
+                else:
+                    # Interior: extract 8x8, place at (0,8) - fills bottom half of top area
+                    src_rect = pygame.Rect(128 + dx, 0 + dy1, 8, 8)
+                    dest_y = 8
+                
+                if (sprite.get_width() >= src_rect.right and 
+                    sprite.get_height() >= src_rect.bottom):
+                    tile_surface.blit(sprite.subsurface(src_rect), (0, dest_y))
     
-        tile_width = size
-        tile_height = int(size * 1.5)  # so 24 if size is 16
-        tile_surface = pygame.Surface((tile_width, tile_height), pygame.SRCALPHA).convert_alpha()
+                # TOP-RIGHT segment
+                if not right and not up:
+                    # Corner: extract 8x16, place at TOP (8,0) - fills full height
+                    src_rect = pygame.Rect(8 + dx, 0 + dy2, 8, 16)
+                    dest_y = 0
+                elif not up:
+                    # Top edge: extract 8x16, place at TOP (8,0) - fills full height
+                    src_rect = pygame.Rect(40 + dx, 0 + dy2, 8, 16)
+                    dest_y = 0
+                elif not right:
+                    # Right edge: extract 8x8, place at (8,8) - fills bottom half of top area
+                    src_rect = pygame.Rect(104 + dx, 0 + dy1, 8, 8)
+                    dest_y = 8
+                elif not up_right:
+                    # Inner corner: extract 8x8, place at (8,8) - fills bottom half of top area
+                    src_rect = pygame.Rect(72 + dx, 8 + dy2, 8, 8)
+                    dest_y = 8
+                else:
+                    # Interior: extract 8x8, place at (8,8) - fills bottom half of top area
+                    src_rect = pygame.Rect(136 + dx, 0 + dy1, 8, 8)
+                    dest_y = 8
+                
+                if (sprite.get_width() >= src_rect.right and 
+                    sprite.get_height() >= src_rect.bottom):
+                    tile_surface.blit(sprite.subsurface(src_rect), (8, dest_y))
     
-        grass_y = tile_height - size  # e.g. 8
-        dirt_y = 0
+                # BOTTOM-LEFT segment (dirt at bottom of tile) - always at y=16
+                if not left and not down:
+                    src_rect = pygame.Rect(0 + dx, 16 + dy2, 8, 8)
+                elif not down:
+                    src_rect = pygame.Rect(32 + dx, 16 + dy2, 8, 8)
+                elif not left and not down_left:
+                    src_rect = pygame.Rect(96 + dx, 8 + dy1, 8, 8)
+                elif not left and down_left:
+                    src_rect = pygame.Rect(64 + dx, 0 + dy3, 8, 8)
+                elif not down_left:
+                    src_rect = pygame.Rect(64 + dx, 16 + dy2, 8, 8)
+                else:
+                    src_rect = pygame.Rect(128 + dx, 8 + dy1, 8, 8)
+                
+                if (sprite.get_width() >= src_rect.right and 
+                    sprite.get_height() >= src_rect.bottom):
+                    tile_surface.blit(sprite.subsurface(src_rect), (0, 16))
     
-        def blit_segment(src_rect, dest_x, dest_y, dest_h):
-            sx, sy, sw, sh = src_rect
-            if sprite.get_width() >= sx + sw and sprite.get_height() >= sy + sh:
-                segment = sprite.subsurface(pygame.Rect(sx, sy, sw, sh))
-                scaled = pygame.transform.scale(segment, (tile_width // 2, dest_h))
-                tile_surface.blit(scaled, (dest_x, dest_y))
+                # BOTTOM-RIGHT segment (dirt at bottom of tile) - always at y=16
+                if not right and not down:
+                    src_rect = pygame.Rect(8 + dx, 16 + dy2, 8, 8)
+                elif not down:
+                    src_rect = pygame.Rect(40 + dx, 16 + dy2, 8, 8)
+                elif not right and not down_right:
+                    src_rect = pygame.Rect(104 + dx, 8 + dy1, 8, 8)
+                elif not right and down_right:
+                    src_rect = pygame.Rect(72 + dx, 0 + dy3, 8, 8)
+                elif not down_right:
+                    src_rect = pygame.Rect(72 + dx, 16 + dy2, 8, 8)
+                else:
+                    src_rect = pygame.Rect(136 + dx, 8 + dy1, 8, 8)
+                
+                if (sprite.get_width() >= src_rect.right and 
+                    sprite.get_height() >= src_rect.bottom):
+                    tile_surface.blit(sprite.subsurface(src_rect), (8, 16))
     
-        # Top-left
-        if not left and not up:
-            blit_segment((0 + dx, 0 + dy2, 8, 16), 0, grass_y, tile_height - grass_y)
-        elif not up:
-            blit_segment((32 + dx, 0 + dy2, 8, 16), 0, grass_y, tile_height - grass_y)
-        elif not left:
-            blit_segment((96 + dx, 0 + dy1, 8, 8), 0, grass_y, tile_height - grass_y)
-        elif not up_left:
-            blit_segment((64 + dx, 8 + dy2, 8, 8), 0, grass_y, tile_height - grass_y)
-        else:
-            blit_segment((128 + dx, 0 + dy1, 8, 8), 0, grass_y, tile_height - grass_y)
+            # Scale and position the final 16x24 tile
+            if size == 16:
+                # Render the full 16x24 tile, positioned so the bottom 16px align with the grid
+                # This allows the top 8px (grass) to extend above the grid line naturally
+                surface.blit(tile_surface, (screen_x, screen_y - 8))
+            else:
+                # Scale maintaining 16:24 aspect ratio
+                final_width = size
+                final_height = int(size * 1.5)  # 24/16 = 1.5
+                
+                scaled_tile = pygame.transform.scale(tile_surface, (final_width, final_height))
+                # Position so the bottom portion aligns with the grid cell
+                # The extra height extends upward like grass/details
+                adj_screen_y = screen_y - int(size * 0.5)  # Offset by the extra height
+                surface.blit(scaled_tile, (screen_x, adj_screen_y))
     
-        # Top-right
-        if not right and not up:
-            blit_segment((8 + dx, 0 + dy2, 8, 16), tile_width // 2, grass_y, tile_height - grass_y)
-        elif not up:
-            blit_segment((40 + dx, 0 + dy2, 8, 16), tile_width // 2, grass_y, tile_height - grass_y)
-        elif not right:
-            blit_segment((104 + dx, 0 + dy1, 8, 8), tile_width // 2, grass_y, tile_height - grass_y)
-        elif not up_right:
-            blit_segment((72 + dx, 8 + dy2, 8, 8), tile_width // 2, grass_y, tile_height - grass_y)
-        else:
-            blit_segment((136 + dx, 0 + dy1, 8, 8), tile_width // 2, grass_y, tile_height - grass_y)
-    
-        # Bottom-left
-        if not left and not down:
-            blit_segment((0 + dx, 16 + dy2, 8, 8), 0, dirt_y, size // 2)
-        elif not down:
-            blit_segment((32 + dx, 16 + dy2, 8, 8), 0, dirt_y, size // 2)
-        elif not left and not down_left:
-            blit_segment((96 + dx, 8 + dy1, 8, 8), 0, dirt_y, size // 2)
-        elif not left and down_left:
-            blit_segment((64 + dx, 0 + dy3, 8, 8), 0, dirt_y, size // 2)
-        elif not down_left:
-            blit_segment((64 + dx, 16 + dy2, 8, 8), 0, dirt_y, size // 2)
-        else:
-            blit_segment((128 + dx, 8 + dy1, 8, 8), 0, dirt_y, size // 2)
-    
-        # Bottom-right
-        if not right and not down:
-            blit_segment((8 + dx, 16 + dy2, 8, 8), tile_width // 2, dirt_y, size // 2)
-        elif not down:
-            blit_segment((40 + dx, 16 + dy2, 8, 8), tile_width // 2, dirt_y, size // 2)
-        elif not right and not down_right:
-            blit_segment((104 + dx, 8 + dy1, 8, 8), tile_width // 2, dirt_y, size // 2)
-        elif not right and down_right:
-            blit_segment((72 + dx, 0 + dy3, 8, 8), tile_width // 2, dirt_y, size // 2)
-        elif not down_right:
-            blit_segment((72 + dx, 16 + dy2, 8, 8), tile_width // 2, dirt_y, size // 2)
-        else:
-            blit_segment((136 + dx, 8 + dy1, 8, 8), tile_width // 2, dirt_y, size // 2)
-    
-        # Shift tile upward by 8 pixels so bottom lines up like Rust
-        surface.blit(tile_surface, (screen_x, screen_y - (tile_height - size)))
-
+        except Exception as e:
+            print(f"Error in fixed 'all' sprite rendering: {e}")
+            # Fallback to error rectangle
+            pygame.draw.rect(surface, (255, 0, 255), (screen_x, screen_y, size, size))
     
     def draw_vertical_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
         """Optimized vertical sprite drawing - FIXED part positioning"""
@@ -900,7 +974,7 @@ class OptimizedTileRenderer:
             pygame.draw.rect(surface, (255, 0, 255), (screen_x, screen_y, size, size))
     
     def draw_smaller_blocks_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
-        """Fixed smaller_blocks: builds 16x24 tile with top pieces 16px tall, bottom pieces 8px, then shifts up 8px"""
+        """FIXED smaller_blocks: properly handles segment scaling to prevent stretching"""
         neighbors = tile_info.get('neighbors', {})
         left = neighbors.get('left', False)
         right = neighbors.get('right', False)
@@ -909,38 +983,66 @@ class OptimizedTileRenderer:
         down_left = neighbors.get('down_left', False)
         down_right = neighbors.get('down_right', False)
     
-        # Build a 16x24 tile (for top segments 16px tall + bottom segments 8px)
+        # Build a 16x24 tile (top segments + bottom segments)
         tile_surface = pygame.Surface((16, 24), pygame.SRCALPHA).convert_alpha()
         tile_surface.fill((0, 0, 0, 0))
     
         try:
-            # Top-left (draw at 0,8 so its bottom half lines up at grid line)
+            # Helper function to get segment with proper scaling
+            def get_scaled_segment(rect_coords, target_width, target_height):
+                segment = sprite.subsurface(pygame.Rect(*rect_coords))
+                if segment.get_size() != (target_width, target_height):
+                    return pygame.transform.scale(segment, (target_width, target_height))
+                return segment
+    
+            # Top-left quadrant
             if not left and not up:
+                # Corner piece - usually 8x16
                 tl_rect = (0, 0, 8, 16)
+                target_height = 16
             elif not up:
+                # Top edge piece - usually 8x16  
                 tl_rect = (16, 0, 8, 16)
+                target_height = 16
             elif not left:
+                # Left edge piece when neighbor above - usually 8x8
                 tl_rect = (48, 8, 8, 8)
+                target_height = 8  # FIXED: Don't stretch 8x8 to 8x16
             else:
+                # Interior piece when neighbor above - usually 8x8
                 tl_rect = (32, 8, 8, 8)
-            segment = sprite.subsurface(pygame.Rect(*tl_rect))
-            segment = pygame.transform.scale(segment, (8, 16))
-            tile_surface.blit(segment, (0, 0))
+                target_height = 8  # FIXED: Don't stretch 8x8 to 8x16
+            
+            tl_segment = get_scaled_segment(tl_rect, 8, target_height)
+            tile_surface.blit(tl_segment, (0, 0))
     
-            # Top-right
+            # Top-right quadrant
             if not right and not up:
+                # Corner piece - usually 8x16
                 tr_rect = (8, 0, 8, 16)
+                target_height = 16
             elif not up:
+                # Top edge piece - usually 8x16
                 tr_rect = (24, 0, 8, 16)
+                target_height = 16
             elif not right:
+                # Right edge piece when neighbor above - usually 8x8
                 tr_rect = (56, 8, 8, 8)
+                target_height = 8  # FIXED: Don't stretch 8x8 to 8x16
             else:
+                # Interior piece when neighbor above - usually 8x8
                 tr_rect = (40, 8, 8, 8)
-            segment = sprite.subsurface(pygame.Rect(*tr_rect))
-            segment = pygame.transform.scale(segment, (8, 16))
-            tile_surface.blit(segment, (8, 0))
+                target_height = 8  # FIXED: Don't stretch 8x8 to 8x16
+            
+            tr_segment = get_scaled_segment(tr_rect, 8, target_height)
+            tile_surface.blit(tr_segment, (8, 0))
     
-            # Bottom-left (8x8 drawn at y=16)
+            # Calculate where bottom segments should start
+            # If top segments are 8px tall, bottom starts at y=8
+            # If top segments are 16px tall, bottom starts at y=16
+            bottom_y_start = 16 if target_height == 16 else 8
+    
+            # Bottom-left quadrant (always 8x8, positioned appropriately)
             if not left and not down:
                 bl_rect = (0, 16, 8, 8)
             elif not down:
@@ -951,11 +1053,11 @@ class OptimizedTileRenderer:
                 bl_rect = (48, 16, 8, 8)
             else:
                 bl_rect = (32, 0, 8, 8)
-            segment = sprite.subsurface(pygame.Rect(*bl_rect))
-            segment = pygame.transform.scale(segment, (8, 8))
-            tile_surface.blit(segment, (0, 16))
+            
+            bl_segment = get_scaled_segment(bl_rect, 8, 8)
+            tile_surface.blit(bl_segment, (0, bottom_y_start))
     
-            # Bottom-right
+            # Bottom-right quadrant (always 8x8, positioned appropriately)
             if not right and not down:
                 br_rect = (8, 16, 8, 8)
             elif not down:
@@ -966,19 +1068,35 @@ class OptimizedTileRenderer:
                 br_rect = (56, 16, 8, 8)
             else:
                 br_rect = (40, 0, 8, 8)
-            segment = sprite.subsurface(pygame.Rect(*br_rect))
-            segment = pygame.transform.scale(segment, (8, 8))
-            tile_surface.blit(segment, (8, 16))
+            
+            br_segment = get_scaled_segment(br_rect, 8, 8)
+            tile_surface.blit(br_segment, (8, bottom_y_start))
     
-            # Now scale and shift up 8 pixels
-            final_height = int(size * 1.5)  # because 24 is 1.5 x 16
-            scaled_tile = pygame.transform.scale(tile_surface, (size, final_height))
-            surface.blit(scaled_tile, (screen_x, screen_y - (final_height - size)))
+            # Calculate final tile height based on actual content
+            # If we have tall top segments (16px) + bottom segments (8px) = 24px total
+            # If we have short top segments (8px) + bottom segments (8px) = 16px total
+            final_tile_height = bottom_y_start + 8
+            
+            # Scale the final tile to match current zoom level
+            if size == 16 and final_tile_height == 16:
+                # No scaling needed - direct blit
+                surface.blit(tile_surface.subsurface((0, 0, 16, 16)), (screen_x, screen_y))
+            else:
+                # Scale proportionally
+                final_width = size
+                final_height = int(size * final_tile_height / 16)
+                scaled_tile = pygame.transform.scale(
+                    tile_surface.subsurface((0, 0, 16, final_tile_height)), 
+                    (final_width, final_height)
+                )
+                
+                # Position the scaled tile (align bottom with grid)
+                adjusted_y = screen_y + size - final_height
+                surface.blit(scaled_tile, (screen_x, adjusted_y))
     
         except Exception as e:
             print(f"Error in fixed smaller_blocks rendering: {e}")
             pygame.draw.rect(surface, (255, 0, 255), (screen_x, screen_y, size, size))
-
     
     def draw_platform_enhanced_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
         """Optimized platform enhanced sprite drawing"""
