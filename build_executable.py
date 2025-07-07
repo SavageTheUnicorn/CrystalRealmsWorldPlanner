@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Fixed build script for World Planner that creates a 100% standalone executable
-Now includes proper BackgroundManager embedding support
+Now includes proper BackgroundManager embedding support and OptimizedBrushManager
 """
 
 import os
@@ -850,8 +850,7 @@ class BlockManager:
             print(f"Error loading embedded sprite {sprite_path}: {e}")
             return False
     
-    
-def get_sprite_directories(self):
+    def get_sprite_directories(self):
         """Get sprite directories for file system fallback"""
         dirs = []
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1138,10 +1137,15 @@ a = Analysis(
         'math',
         'os',
         'sys',
+        'copy',
+        'threading',
         'embedded_resources',
         'undo_manager',
         'block_manager_embedded',
-        'background_manager_embedded'
+        'background_manager_embedded',
+        'constants',
+        'tile_renderer',
+        'chunk_manager'
     ],
     hookspath=[],
     hooksconfig={},
@@ -1303,7 +1307,7 @@ def verify_standalone_executable():
 def main():
     """Main build process for 100% standalone executable"""
     print("=== World Planner 100% Standalone Build Script ===")
-    print("Now with full BackgroundManager support!")
+    print("Now with full BackgroundManager support and OptimizedBrushManager!")
     print()
     
     # Check for required files
@@ -1322,20 +1326,20 @@ def main():
             return False
         
         # Step 2: Check PyInstaller
-        print("\\nStep 2: Checking PyInstaller...")
+        print("\nStep 2: Checking PyInstaller...")
         if not check_pyinstaller():
             print("❌ PyInstaller not working properly")
             return False
         
         # Step 3: Create embedded resources (including backgrounds and tile rules)
-        print("\\nStep 3: Creating embedded resources...")
+        print("\nStep 3: Creating embedded resources...")
         resource_count = create_embedded_resources()
         if resource_count is False:
             print("❌ Failed to create embedded resources")
             return False
         
         # Step 4: Create modified files
-        print("\\nStep 4: Creating modified source files...")
+        print("\nStep 4: Creating modified source files...")
         if not create_modified_block_manager():
             return False
         if not create_embedded_background_manager():  # NEW: Create embedded background manager
@@ -1344,52 +1348,53 @@ def main():
             return False
         
         # Step 5: Validate generated files
-        print("\\nStep 5: Validating generated files...")
+        print("\nStep 5: Validating generated files...")
         if not validate_generated_files():
             print("❌ Generated files validation failed")
             return False
         
         # Step 6: Create standalone spec file
-        print("\\nStep 6: Creating standalone PyInstaller spec...")
+        print("\nStep 6: Creating standalone PyInstaller spec...")
         if not create_standalone_spec_file():
             print("❌ Failed to create spec file")
             return False
         
         # Step 7: Build executable
-        print("\\nStep 7: Building standalone executable...")
+        print("\nStep 7: Building standalone executable...")
         print("This may take several minutes...")
         if build_standalone_executable():
-            print("\\n🎉 Build completed!")
+            print("\n🎉 Build completed!")
             
             # Step 8: Verify standalone nature
-            print("\\nStep 8: Verifying standalone executable...")
+            print("\nStep 8: Verifying standalone executable...")
             if verify_standalone_executable():
-                print("\\n🎉 SUCCESS: 100% Standalone executable created!")
+                print("\n🎉 SUCCESS: 100% Standalone executable created!")
                 print(f"📊 Embedded {resource_count} total resources (sprites + backgrounds + tile rules)")
-                print("\\n📋 Your friends can now:")
+                print("\n📋 Your friends can now:")
                 print("   1. Download just the .exe file")
                 print("   2. Run it anywhere without any other files")
                 print("   3. No Python installation required")
                 print("   4. No _internal folder needed")
                 print("   5. Full background support included!")
+                print("   6. Optimized brush performance included!")
             else:
-                print("\\n⚠️ Build completed but executable may not be fully standalone")
+                print("\n⚠️ Build completed but executable may not be fully standalone")
                 return False
         else:
             print("❌ Build failed!")
             return False
         
         # Step 9: Cleanup (optional)
-        print("\\nStep 9: Cleaning up temporary files...")
+        print("\nStep 9: Cleaning up temporary files...")
         cleanup_temp_files()
         
         return True
         
     except KeyboardInterrupt:
-        print("\\n⚠️ Build interrupted by user")
+        print("\n⚠️ Build interrupted by user")
         return False
     except Exception as e:
-        print(f"\\n❌ Build process failed: {e}")
+        print(f"\n❌ Build process failed: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -1397,14 +1402,15 @@ def main():
 if __name__ == "__main__":
     success = main()
     if success:
-        print("\\n🎉 Build completed successfully!")
-        print("\\n📦 Distribution Instructions:")
+        print("\n🎉 Build completed successfully!")
+        print("\n📦 Distribution Instructions:")
         print("1. Share ONLY the WorldPlanner.exe file (no folders needed)")
         print("2. Recipients can run it on any Windows machine")
         print("3. No Python, dependencies, or additional files required")
         print("4. 100% standalone - works anywhere!")
         print("5. All backgrounds and sprites included!")
+        print("6. Optimized brush performance included!")
     else:
-        print("\\n❌ Build failed. Please check the errors above.")
+        print("\n❌ Build failed. Please check the errors above.")
     
-    input("\\nPress Enter to exit...")
+    input("\nPress Enter to exit...")
