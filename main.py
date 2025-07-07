@@ -482,6 +482,153 @@ class OptimizedHotkeyHelpManager:
             
         surface.blit(self.surface, (x, y))
 
+class OptimizedBrushManager:
+    """High-performance brush manager with pre-calculated patterns and spatial indexing"""
+    
+    def __init__(self, world_planner):
+        self.world_planner = world_planner
+        
+        # Pre-calculated brush patterns (cached)
+        self.brush_patterns = {}  # {(size, shape): [(dx, dy), ...]}
+        
+        # Spatial index for fast collision detection
+        self.spatial_index = {}  # {(x, y): (origin_x, origin_y)}
+        self.index_dirty = True
+        
+        # Batch operation state
+        self.active_stroke = False
+        self.stroke_positions = set()
+        self.stroke_timer = 0
+        self.stroke_batch_delay = 50  # ms
+        
+        # Performance tracking
+        self.last_brush_pos = None
+        
+    def get_brush_pattern(self, size, shape):
+        """Get pre-calculated brush pattern"""
+        key = (size, shape)
+        if key not in self.brush_patterns:
+            pattern = []
+            radius = size - 1
+            
+            if shape == 'square':
+                for dy in range(-radius, radius + 1):
+                    for dx in range(-radius, radius + 1):
+                        pattern.append((dx, dy))
+            else:  # circle
+                for dy in range(-radius, radius + 1):
+                    for dx in range(-radius, radius + 1):
+                        if dx*dx + dy*dy <= radius*radius:
+                            pattern.append((dx, dy))
+            
+            self.brush_patterns[key] = pattern
+        
+        return self.brush_patterns[key]
+    
+    def update_spatial_index(self):
+        """Update spatial index for fast collision detection"""
+        if not self.index_dirty:
+            return
+            
+        self.spatial_index.clear()
+        
+        # Index all sprites by their occupied tiles
+        for layer_enum in [self.world_planner.active_layer]:  # Only index active layer
+            layer = self.world_planner.layers[layer_enum]
+            for (origin_x, origin_y), block_data in layer.items():
+                sprite = self.world_planner.block_manager.get_sprite(block_data.get('id', ''))
+                occupied_tiles = self.world_planner.tile_renderer.get_sprite_occupied_tiles(
+                    origin_x, origin_y, block_data, sprite
+                )
+                for tile_x, tile_y in occupied_tiles:
+                    self.spatial_index[(tile_x, tile_y)] = (origin_x, origin_y)
+        
+        self.index_dirty = False
+    
+    def fast_collision_check(self, tile_x, tile_y):
+        """Fast collision check using spatial index"""
+        self.update_spatial_index()
+        return (tile_x, tile_y) in self.spatial_index
+    
+    def fast_find_sprite_at_position(self, tile_x, tile_y):
+        """Fast sprite lookup using spatial index"""
+        self.update_spatial_index()
+        origin_pos = self.spatial_index.get((tile_x, tile_y))
+        if origin_pos:
+            layer = self.world_planner.layers[self.world_planner.active_layer]
+            block_data = layer.get(origin_pos)
+            return origin_pos, block_data
+        return None, None
+    
+    def start_brush_stroke(self):
+        """Start a new brush stroke"""
+        self.active_stroke = True
+        self.stroke_positions.clear()
+        self.stroke_timer = pygame.time.get_ticks()
+    
+    def add_brush_position(self, center_x, center_y, is_erase=False):
+        """Add position to current brush stroke"""
+        if not self.active_stroke:
+            self.start_brush_stroke()
+        
+        # Skip if same position as last brush
+        if self.last_brush_pos == (center_x, center_y):
+            return
+        self.last_brush_pos = (center_x, center_y)
+        
+        # Get brush pattern
+        pattern = self.get_brush_pattern(self.world_planner.brush_size, self.world_planner.brush_shape)
+        
+        # Process all positions in brush pattern
+        for dx, dy in pattern:
+            tile_x, tile_y = center_x + dx, center_y + dy
+            
+            if not self.world_planner.is_valid_position(tile_x, tile_y):
+                continue
+            if self.world_planner.is_bedrock_position(tile_y):
+                continue
+            
+            if is_erase:
+                # Fast erase using spatial index
+                origin_pos, block_data = self.fast_find_sprite_at_position(tile_x, tile_y)
+                if origin_pos and origin_pos in self.world_planner.layers[self.world_planner.active_layer]:
+                    del self.world_planner.layers[self.world_planner.active_layer][origin_pos]
+                    self.stroke_positions.add(origin_pos)
+                    self.spatial_index.pop((tile_x, tile_y), None)  # Update index immediately
+            else:
+                # Fast place using spatial index
+                if not self.fast_collision_check(tile_x, tile_y):
+                    block_data = self.world_planner.create_block_data_from_selected()
+                    if block_data:
+                        self.world_planner.layers[self.world_planner.active_layer][(tile_x, tile_y)] = block_data.copy()
+                        self.stroke_positions.add((tile_x, tile_y))
+                        self.spatial_index[(tile_x, tile_y)] = (tile_x, tile_y)  # Update index immediately
+    
+    def should_update_chunks(self):
+        """Check if enough time has passed to update chunks"""
+        return pygame.time.get_ticks() - self.stroke_timer > self.stroke_batch_delay
+    
+    def finish_brush_stroke(self, force=False):
+        """Finish current brush stroke and update chunks"""
+        if not self.active_stroke:
+            return
+            
+        if not force and not self.should_update_chunks():
+            return
+        
+        # Batch update chunks for all affected positions
+        if self.stroke_positions:
+            self.world_planner.chunk_manager.force_update_affected_chunks(list(self.stroke_positions))
+        
+        # Reset stroke state
+        self.active_stroke = False
+        self.stroke_positions.clear()
+        self.last_brush_pos = None
+        self.index_dirty = True  # Mark for rebuild on next operation
+    
+    def invalidate_spatial_index(self):
+        """Mark spatial index as needing rebuild"""
+        self.index_dirty = True
 
 class OptimizedWorldPlanner:
     """Optimized World Planner with comprehensive performance improvements"""
@@ -650,6 +797,9 @@ class OptimizedWorldPlanner:
         # Initialize optimized chunk manager AFTER layers are set up
         self.chunk_manager = OptimizedChunkManager(self, chunk_size=24)
         
+        # Initialize optimized brush manager
+        self.brush_manager = OptimizedBrushManager(self)
+        
         # HOTFIX: Override the broken grid drawing method in chunk manager
         self.fix_chunk_grid_rendering()
         
@@ -740,6 +890,11 @@ class OptimizedWorldPlanner:
             # FIXED: Invalidate all chunks like clear_world does
             self.chunk_manager.invalidate_all_chunks()
             self.init_ui()
+
+    def invalidate_brush_cache(self):
+        """Invalidate brush spatial index when world changes significantly"""
+        if hasattr(self, 'brush_manager'):
+            self.brush_manager.invalidate_spatial_index()
 
     def debug_sprite_occupancy(self, block_id):
         """Debug method to check sprite occupancy calculation"""
@@ -1398,6 +1553,8 @@ class OptimizedWorldPlanner:
                 self.undo_manager.clear_history()
                 self.undo_manager.save_state(self.layers, f"Loaded from {os.path.basename(file_path)}")
                 self.init_ui()
+                self.invalidate_brush_cache()
+                
         except Exception as e:
             print(f"Error loading world: {e}")
 
@@ -1470,6 +1627,7 @@ class OptimizedWorldPlanner:
         self.place_bedrock()
         self.chunk_manager.invalidate_all_chunks()
         self.init_ui()
+        self.invalidate_brush_cache()
 
     def open_sprite_dialog(self):
         """Open a file dialog to upload sprites"""
@@ -2275,6 +2433,8 @@ class OptimizedWorldPlanner:
                         return
                 self.is_dragging = True
                 self.last_mouse_pos = pos
+                # Capture mouse during panning
+                pygame.event.set_grab(True)
                 return
     
             # Handle left clicks for various tools
@@ -2317,6 +2477,9 @@ class OptimizedWorldPlanner:
                     else:
                         if self.erase_block_at_position(tile_x, tile_y):
                             self.save_state_for_undo("Erase block")
+                            # FIXED: Add immediate visual updates for single erase
+                            self.chunk_manager.force_update_affected_chunks([(tile_x, tile_y)])
+                            self.force_immediate_chunk_update()
     
                 elif self.active_tool == Tool.FILL and self.selected_block:
                     if not self.is_valid_position(tile_x, tile_y):
@@ -2763,7 +2926,7 @@ class OptimizedWorldPlanner:
             return
     
         if self.is_dragging:
-            # Pan camera with optimization - REDUCED CHUNK INVALIDATION
+            # Pan camera with infinite panning support
             mouse_x, mouse_y = pos
             last_x, last_y = self.last_mouse_pos
     
@@ -2773,7 +2936,33 @@ class OptimizedWorldPlanner:
             self.camera_x += delta_x
             self.camera_y += delta_y
     
-            self.last_mouse_pos = pos
+            # Check for mouse wrapping during panning
+            wrap_margin = 50  # Distance from edge to trigger wrap
+            new_mouse_x, new_mouse_y = mouse_x, mouse_y
+            wrapped = False
+    
+            # Wrap horizontally
+            if mouse_x <= wrap_margin:
+                new_mouse_x = self.screen_width - wrap_margin - 1
+                wrapped = True
+            elif mouse_x >= self.screen_width - wrap_margin:
+                new_mouse_x = wrap_margin + 1
+                wrapped = True
+    
+            # Wrap vertically
+            if mouse_y <= wrap_margin:
+                new_mouse_y = self.screen_height - wrap_margin - 1
+                wrapped = True
+            elif mouse_y >= self.screen_height - wrap_margin:
+                new_mouse_y = wrap_margin + 1
+                wrapped = True
+    
+            # Apply wrapping if needed
+            if wrapped:
+                pygame.mouse.set_pos(new_mouse_x, new_mouse_y)
+                self.last_mouse_pos = (new_mouse_x, new_mouse_y)
+            else:
+                self.last_mouse_pos = pos
     
         # Update cursor
         if self.is_point_on_resize_handle(pos):
@@ -2797,58 +2986,20 @@ class OptimizedWorldPlanner:
                         self.erase_blocks_with_brush(tile_x, tile_y)
 
     def place_blocks_with_brush(self, center_x, center_y, block_data):
-        """Place blocks in a brush pattern with immediate visual feedback"""
-        radius = self.brush_size - 1
-        affected_positions = []
+        """Optimized brush placement using pre-calculated patterns"""
+        self.brush_manager.add_brush_position(center_x, center_y, is_erase=False)
         
-        if self.brush_shape == 'square':
-            for y in range(center_y - radius, center_y + radius + 1):
-                for x in range(center_x - radius, center_x + radius + 1):
-                    if self.is_valid_position(x, y) and not self.is_bedrock_position(y):
-                        if not self.tile_renderer.check_placement_collision(self, x, y, block_data, self.active_layer):
-                            self.layers[self.active_layer][(x, y)] = block_data.copy()
-                            affected_positions.append((x, y))
-        else:  # circle
-            for y in range(center_y - radius, center_y + radius + 1):
-                for x in range(center_x - radius, center_x + radius + 1):
-                    distance = math.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
-                    if distance <= radius and self.is_valid_position(x, y) and not self.is_bedrock_position(y):
-                        if not self.tile_renderer.check_placement_collision(self, x, y, block_data, self.active_layer):
-                            self.layers[self.active_layer][(x, y)] = block_data.copy()
-                            affected_positions.append((x, y))
-        
-        # Immediate updates for brush operations
-        if affected_positions:
-            self.chunk_manager.force_update_affected_chunks(affected_positions)
-            self.force_immediate_chunk_update()
+        # Update chunks if enough time has passed
+        if self.brush_manager.should_update_chunks():
+            self.brush_manager.finish_brush_stroke()
     
     def erase_blocks_with_brush(self, center_x, center_y):
-        """Erase blocks in a brush pattern with immediate visual feedback"""
-        radius = self.brush_size - 1
-        affected_positions = []
-    
-        if self.brush_shape == 'square':
-            for y in range(center_y - radius, center_y + radius + 1):
-                for x in range(center_x - radius, center_x + radius + 1):
-                    if self.is_valid_position(x, y) and not self.is_bedrock_position(y):
-                        origin_pos, block_data = self.tile_renderer.find_sprite_at_position(self, x, y, self.active_layer)
-                        if origin_pos is not None and origin_pos in self.layers[self.active_layer]:
-                            del self.layers[self.active_layer][origin_pos]
-                            affected_positions.append(origin_pos)
-        else:  # circle
-            for y in range(center_y - radius, center_y + radius + 1):
-                for x in range(center_x - radius, center_x + radius + 1):
-                    distance = math.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
-                    if distance <= radius and self.is_valid_position(x, y) and not self.is_bedrock_position(y):
-                        origin_pos, block_data = self.tile_renderer.find_sprite_at_position(self, x, y, self.active_layer)
-                        if origin_pos is not None and origin_pos in self.layers[self.active_layer]:
-                            del self.layers[self.active_layer][origin_pos]
-                            affected_positions.append(origin_pos)
+        """Optimized brush erasure using pre-calculated patterns"""
+        self.brush_manager.add_brush_position(center_x, center_y, is_erase=True)
         
-        # Immediate updates for brush operations
-        if affected_positions:
-            self.chunk_manager.force_update_affected_chunks(affected_positions)
-            self.force_immediate_chunk_update()
+        # Update chunks if enough time has passed
+        if self.brush_manager.should_update_chunks():
+            self.brush_manager.finish_brush_stroke()
 
     def force_immediate_chunk_update(self):
         """Force immediate chunk rendering that works at all zoom levels"""
@@ -2893,12 +3044,16 @@ class OptimizedWorldPlanner:
                 self.copy_selection()
             elif self.batch_operation_active:
                 self.end_batch_operation()
+            
+            # OPTIMIZED: Finish brush stroke on mouse up
+            if self.active_tool in [Tool.BRUSH, Tool.ERASE]:
+                self.brush_manager.finish_brush_stroke(force=True)
     
         elif button == 3:
             if self.is_dragging:
                 self.is_dragging = False
-                # REMOVED: The expensive chunk invalidation that was causing lag!
-                # No chunk operations on mouse up - let the render loop handle it naturally
+                # Release mouse capture when panning ends
+                pygame.event.set_grab(False)
 
     def handle_mouse_wheel(self, event):
         """Handle mouse wheel events with optimizations"""
