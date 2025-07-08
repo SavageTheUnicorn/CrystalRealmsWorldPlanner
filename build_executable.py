@@ -274,6 +274,13 @@ def get_default_tile_rules():
                     "bottom": {"x": 0, "y": 16, "width": 16, "height": 8}
                 }
             },
+            "background_quadrant": {
+                "type": "background_quadrant",
+                "connects_to": ["self"],
+                "sprite_layout": {
+                    "quadrant": {"x": 0, "y": 0, "width": 16, "height": 16}
+                }
+            },
             "standard": {
                 "type": "none",
                 "sprite_layout": {
@@ -290,13 +297,16 @@ def get_default_tile_rules():
             "stone": "standard",
             "wood": "standard"
         },
-        "directory_mappings": {},
+        "directory_mappings": {
+            "spritesSORTED/connectables/bgs": "background_quadrant"
+        },
         "sprite_detection_patterns": {
             "vine_patterns": ["vine", "ivy"],
             "cactus_patterns": ["cactus"],
             "platform_patterns": ["platform"],
             "fence_patterns": ["fence"],
-            "connected_block_patterns": ["dirt", "stone", "wood"]
+            "connected_block_patterns": ["dirt", "stone", "wood"],
+            "background_quadrant_patterns": ["bg", "background"]
         }
     }
 
@@ -768,6 +778,12 @@ class BlockManager:
                     return 'standard'
                 elif sub_category == 'smallerblocks':
                     return 'smaller_blocks'
+                elif sub_category == 'chain':
+                    return 'chain'
+                elif sub_category == 'columns':
+                    return 'column'
+                elif sub_category == 'bgs':
+                    return 'background_quadrant'
                 elif sub_category == 'greenery' and len(path_parts) > 2:
                     greenery_type = path_parts[2]
                     if greenery_type == 'down':
@@ -935,10 +951,16 @@ class BlockManager:
                     block_def['tileable'] = {'top': True, 'right': False, 'bottom': True, 'left': False}
                 elif sprite_type == 'vertical':
                     block_def['tileable'] = {'top': True, 'right': False, 'bottom': True, 'left': False}
+                elif sprite_type == 'chain':
+                    block_def['tileable'] = {'top': True, 'right': False, 'bottom': True, 'left': False}
+                elif sprite_type == 'column':
+                    block_def['tileable'] = {'top': True, 'right': False, 'bottom': True, 'left': False}
                 elif sprite_type == 'platform_enhanced':
                     block_def['tileable'] = {'top': False, 'right': True, 'bottom': False, 'left': True}
                 elif sprite_type == 'fence_enhanced':
                     block_def['tileable'] = {'top': False, 'right': True, 'bottom': False, 'left': True}
+                elif sprite_type == 'background_quadrant':
+                    block_def['tileable'] = {'top': True, 'right': True, 'bottom': True, 'left': True}
                 elif sprite_type in ['all', 'smaller_blocks', 'bedrock_pattern']:
                     block_def['tileable'] = {'top': True, 'right': True, 'bottom': True, 'left': True}
                 else:
