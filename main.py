@@ -304,15 +304,24 @@ class OptimizedTooltipManager:
         if prerender_only:
             return
         
-        # Position tooltip optimally
+        # Position tooltip optimally - FIXED positioning
         if self.tooltip_surface:
             tooltip_width = self.tooltip_surface.get_width()
-            self.tooltip_rect = pygame.Rect(
-                mouse_pos[0] - tooltip_width // 2,
-                50,
-                tooltip_width, 
-                self.tooltip_surface.get_height()
-            )
+            tooltip_height = self.tooltip_surface.get_height()
+            
+            # Position tooltip slightly above and centered on mouse
+            tooltip_x = mouse_pos[0] - tooltip_width // 2
+            tooltip_y = mouse_pos[1] - tooltip_height - 30  # 10px above mouse
+            
+            # Keep tooltip on screen (boundary checking)
+            tooltip_x = max(10, min(tooltip_x, pygame.display.get_surface().get_width() - tooltip_width - 10))
+            tooltip_y = max(10, tooltip_y)  # Don't go above screen top
+            
+            # If tooltip would go above screen, show it below mouse instead
+            if tooltip_y < 10:
+                tooltip_y = mouse_pos[1] + 20  # 20px below mouse
+            
+            self.tooltip_rect = pygame.Rect(tooltip_x, tooltip_y, tooltip_width, tooltip_height)
     
     def clear_tooltip(self):
         """Clear current tooltip"""
@@ -2570,28 +2579,38 @@ class OptimizedWorldPlanner:
             self.init_ui()
 
     def paste_selection(self, target_x, target_y):
-        """Paste clipboard at target position"""
+        """Paste clipboard at target position using bottom-left as origin"""
         if not self.clipboard:
             return
-
-        modified_chunks = set()
+    
+        # Find the bounds of the clipboard selection
+        all_positions = []
+        for layer_dict in self.clipboard.values():
+            all_positions.extend(layer_dict.keys())
+        
+        if not all_positions:
+            return
+        
+        # Calculate bounds (bottom-left origin means we want max_rel_y)
+        max_rel_y = max(rel_y for rel_x, rel_y in all_positions)
+        
+        affected_positions = []
         
         for layer_enum, layer_dict in self.clipboard.items():
             for rel_pos, block_data in layer_dict.items():
                 rel_x, rel_y = rel_pos
+                # Adjust for bottom-left origin
                 world_x = target_x + rel_x
-                world_y = target_y + rel_y
-
+                world_y = target_y + (max_rel_y - rel_y)
+    
                 if self.is_valid_position(world_x, world_y) and not self.is_bedrock_position(world_y):
                     self.layers[layer_enum][(world_x, world_y)] = block_data.copy()
-                    chunk_key = self.chunk_manager.get_chunk_key(world_x, world_y)
-                    modified_chunks.add(chunk_key)
+                    affected_positions.append((world_x, world_y))
         
-        # FIXED: Force immediate chunk invalidation for all modified chunks
-        for chunk_key in modified_chunks:
-            chunk = self.chunk_manager.get_or_create_chunk(chunk_key[0], chunk_key[1])
-            chunk.dirty = True
-            chunk.blocks_hash = None
+        # Force immediate chunk updates for all affected positions
+        if affected_positions:
+            self.chunk_manager.force_update_affected_chunks(affected_positions)
+            self.force_immediate_chunk_update()
 
     def flood_fill(self, start_x, start_y, target_block, replacement_block):
         """Ultra-optimized flood fill with batched operations"""
@@ -3163,6 +3182,10 @@ class OptimizedWorldPlanner:
                     self.handle_mouse_wheel(event)
                 elif event.type == pygame.VIDEORESIZE:
                     self.handle_window_resize(event)
+            
+            # UPDATE TOOLTIPS EVEN WITHOUT MOUSE MOVEMENT
+            mouse_pos = pygame.mouse.get_pos()
+            self.handle_toolbar_hover(mouse_pos)  # This will check tooltip timing
             
             # Adaptive performance management
             current_time = pygame.time.get_ticks()
