@@ -175,9 +175,6 @@ class BlockManager:
         norm_path = os.path.normpath(file_path).replace('\\', '/')
         path_parts = norm_path.split('/')
         
-        # Debug print for troubleshooting
-        # print(f"Detecting sprite type for: {norm_path}")
-        
         # Check for spritesSORTED directory structure
         if 'spritesSORTED' in path_parts:
             sorted_index = path_parts.index('spritesSORTED')
@@ -219,6 +216,12 @@ class BlockManager:
                             return 'standard'  # Standard single-sprite rendering
                         elif sub_category == 'smallerblocks':
                             return 'smaller_blocks'  # Quadrant-based smaller blocks mode
+                        elif sub_category == 'chain':
+                            return 'chain'  # Chain tiling mode
+                        elif sub_category == 'bgs':
+                            return 'background_quadrant'  # NEW: Background quadrant tiling
+                        elif sub_category == 'columns':
+                            return 'column'  # NEW: Column tiling mode
                         elif sub_category == 'greenery':
                             # Check for greenery subdirectories
                             if len(path_parts) > sorted_index + 3:
@@ -380,10 +383,16 @@ class BlockManager:
                     block_def['tileable'] = {'top': True, 'right': False, 'bottom': True, 'left': False}
                 elif sprite_type == 'vertical':  # cactus
                     block_def['tileable'] = {'top': True, 'right': False, 'bottom': True, 'left': False}
+                elif sprite_type == 'chain':
+                    block_def['tileable'] = {'top': True, 'right': False, 'bottom': True, 'left': False}
+                elif sprite_type == 'column':
+                    block_def['tileable'] = {'top': True, 'right': False, 'bottom': True, 'left': False}
                 elif sprite_type == 'platform_enhanced':
                     block_def['tileable'] = {'top': False, 'right': True, 'bottom': False, 'left': True}
                 elif sprite_type == 'fence_enhanced':
                     block_def['tileable'] = {'top': False, 'right': True, 'bottom': False, 'left': True}
+                elif sprite_type == 'background_quadrant':
+                    block_def['tileable'] = {'top': True, 'right': True, 'bottom': True, 'left': True}
                 elif sprite_type in ['all', 'smaller_blocks', 'bedrock_pattern']:
                     block_def['tileable'] = {'top': True, 'right': True, 'bottom': True, 'left': True}
                 elif sprite_type == 'log':
