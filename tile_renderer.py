@@ -64,13 +64,17 @@ class OptimizedTileRenderer:
         sprite_width = sprite.get_width()
         sprite_height = sprite.get_height()
         
-        # Handle special rendering modes that use large sprite sheets but only occupy 1 tile
-        if tile_mode in ['all', 'smaller_blocks', 'platform_enhanced', 'fence_enhanced', 'bedrock_pattern']:
+        # Handle special rendering modes that use large sprite sheets but only occupy specific tiles
+        if tile_mode in ['all', 'smaller_blocks', 'platform_enhanced', 'fence_enhanced', 'bedrock_pattern', 'background_quadrant']:
             return [(0, 0)]
         
         # Handle contextual single-tile modes
-        if tile_mode in ['vine', 'vertical']:
+        if tile_mode in ['vine', 'vertical', 'chain']:
             return [(0, 0)]
+        
+        # Handle column mode - always 2x1 tiles regardless of sprite size
+        if tile_mode == 'column':
+            return [(0, 0), (1, 0)]
         
         # Calculate tile dimensions using coverage-based approach
         bounds = []
@@ -174,7 +178,7 @@ class OptimizedTileRenderer:
         tile_mode = block_data.get('tileMode', 'standard')
         
         # For complex tiling modes, include neighbor information in cache key
-        if tile_mode in ['all', 'log', 'vine', 'vertical', 'smaller_blocks', 'platform_enhanced', 'fence_enhanced']:
+        if tile_mode in ['all', 'log', 'vine', 'vertical', 'chain', 'column', 'smaller_blocks', 'platform_enhanced', 'fence_enhanced', 'background_quadrant']:
             neighbors = []
             for dx in [-1, 0, 1]:
                 for dy in [-1, 0, 1]:
@@ -213,6 +217,10 @@ class OptimizedTileRenderer:
             return self.get_vertical_tile_info(world_planner, tile_x, tile_y, block_data, layer)
         elif tile_mode == 'vine':
             return self.get_vine_tile_info(world_planner, tile_x, tile_y, block_data, layer)
+        elif tile_mode == 'chain':
+            return self.get_chain_tile_info(world_planner, tile_x, tile_y, block_data, layer)
+        elif tile_mode == 'column':
+            return self.get_column_tile_info(world_planner, tile_x, tile_y, block_data, layer)
         elif tile_mode == '2state':
             return self.get_2state_tile_info(world_planner, tile_x, tile_y, block_data, layer)
         elif tile_mode == '4state':
@@ -225,6 +233,8 @@ class OptimizedTileRenderer:
             return self.get_fence_enhanced_tile_info(world_planner, tile_x, tile_y, block_data, layer)
         elif tile_mode == 'bedrock_pattern':
             return self.get_bedrock_pattern_tile_info(world_planner, tile_x, tile_y, block_data, layer)
+        elif tile_mode == 'background_quadrant':
+            return self.get_background_quadrant_tile_info(world_planner, tile_x, tile_y, block_data, layer)
     
         return 'center'
     
@@ -254,7 +264,7 @@ class OptimizedTileRenderer:
         if tile_mode == 'standard':
             self.draw_standard_sprite_optimized(surface, sprite, int_screen_x, int_screen_y, int_size)
             
-        elif tile_mode in ['all', 'log', 'vertical', 'vine', '2state', '4state', 'smaller_blocks', 'platform_enhanced', 'fence_enhanced', 'bedrock_pattern']:
+        elif tile_mode in ['all', 'log', 'vertical', 'vine', 'chain', 'column', '2state', '4state', 'smaller_blocks', 'platform_enhanced', 'fence_enhanced', 'bedrock_pattern', 'background_quadrant']:
             # Get cached tile info
             tile_info = self.get_tile_variant_cached(world_planner, tile_x, tile_y, block_data, layer)
             if isinstance(tile_info, dict):
@@ -351,12 +361,15 @@ class OptimizedTileRenderer:
             'log': self.draw_log_sprite_optimized,
             'vertical': self.draw_vertical_sprite_optimized,
             'vine': self.draw_vine_sprite_optimized,
+            'chain': self.draw_chain_sprite_optimized,
+            'column': self.draw_column_sprite_optimized,
             '2state': self.draw_2state_sprite_optimized,
             '4state': self.draw_4state_sprite_optimized,
             'smaller_blocks': self.draw_smaller_blocks_sprite_optimized,
             'platform_enhanced': self.draw_platform_enhanced_sprite_optimized,
             'fence_enhanced': self.draw_fence_enhanced_sprite_optimized,
-            'bedrock_pattern': self.draw_bedrock_pattern_sprite_optimized
+            'bedrock_pattern': self.draw_bedrock_pattern_sprite_optimized,
+            'background_quadrant': self.draw_background_quadrant_sprite_optimized
         }
         
         drawer = sprite_drawers.get(tile_type)
@@ -453,6 +466,93 @@ class OptimizedTileRenderer:
         except Exception:
             # Emergency fallback
             self.draw_standard_sprite_optimized(surface, sprite, screen_x, screen_y, size)
+    
+    def draw_chain_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
+        """Optimized chain sprite drawing - extracts 16x16 from 16x32 sprite"""
+        has_chain_below = tile_info.get('has_chain_below', False)
+        
+        sprite_width = sprite.get_width()
+        sprite_height = sprite.get_height()
+        
+        try:
+            if has_chain_below:
+                # Use top 16x16 section (connected piece)
+                src_rect = pygame.Rect(0, 0, 16, 16)
+            else:
+                # Use bottom 16x16 section (hanging piece)
+                src_rect = pygame.Rect(0, 16, 16, 16)
+            
+            # Bounds checking
+            if (src_rect.right <= sprite_width and src_rect.bottom <= sprite_height and
+                src_rect.x >= 0 and src_rect.y >= 0):
+                
+                chain_slice = sprite.subsurface(src_rect)
+                if size != 16:
+                    scaled_slice = pygame.transform.scale(chain_slice, (size, size))
+                    surface.blit(scaled_slice, (screen_x, screen_y))
+                else:
+                    surface.blit(chain_slice, (screen_x, screen_y))
+            else:
+                # Fallback
+                self.draw_standard_sprite_optimized(surface, sprite, screen_x, screen_y, size)
+                
+        except Exception:
+            # Emergency fallback
+            self.draw_standard_sprite_optimized(surface, sprite, screen_x, screen_y, size)
+    
+    def draw_column_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
+        """Optimized column sprite drawing - extracts correct sections from 32x80 sprite"""
+        up = tile_info.get('up', False)
+        down = tile_info.get('down', False)
+        
+        sprite_width = sprite.get_width()
+        sprite_height = sprite.get_height()
+        
+        try:
+            # Determine which section to extract based on Rust logic
+            # Rust coordinates: (src_x, src_y, src_right, src_bottom)
+            if up and down:
+                # Middle section: (0, 24, 32, 40) = x:0, y:24, w:32, h:16
+                src_rect = pygame.Rect(0, 24, 32, 16)
+                target_height = size  # 16px section scales to 1 tile height
+            elif up:
+                # Bottom section: (0, 40, 32, 56) = x:0, y:40, w:32, h:16
+                src_rect = pygame.Rect(0, 40, 32, 16)
+                target_height = size  # 16px section scales to 1 tile height
+            elif down:
+                # Top section: (0, 0, 32, 24) = x:0, y:0, w:32, h:24
+                src_rect = pygame.Rect(0, 0, 32, 24)
+                target_height = int(size * 1.5)  # 24px section scales to 1.5 tile height
+            else:
+                # Single section: (0, 56, 32, 80) = x:0, y:56, w:32, h:24
+                src_rect = pygame.Rect(0, 56, 32, 24)
+                target_height = int(size * 1.5)  # 24px section scales to 1.5 tile height
+            
+            # Bounds checking
+            if (src_rect.right <= sprite_width and src_rect.bottom <= sprite_height and
+                src_rect.x >= 0 and src_rect.y >= 0):
+                
+                column_slice = sprite.subsurface(src_rect)
+                
+                # Scale to match current zoom (columns are 2 tiles wide)
+                scaled_width = size * 2  # 32px = 2 tiles wide
+                
+                if (scaled_width, target_height) != column_slice.get_size():
+                    scaled_slice = pygame.transform.scale(column_slice, (scaled_width, target_height))
+                else:
+                    scaled_slice = column_slice
+                
+                # Position the column sprite (bottom-aligned for consistency)
+                adj_screen_y = screen_y + size - target_height
+                surface.blit(scaled_slice, (screen_x, adj_screen_y))
+            else:
+                # Fallback - draw a simple rectangle
+                pygame.draw.rect(surface, (200, 180, 160), (screen_x, screen_y, size * 2, size))
+                
+        except Exception as e:
+            print(f"Error in column sprite rendering: {e}")
+            # Emergency fallback - draw a simple rectangle
+            pygame.draw.rect(surface, (200, 180, 160), (screen_x, screen_y, size * 2, size))
     
     def draw_log_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
         """Optimized log sprite drawing"""
@@ -610,7 +710,35 @@ class OptimizedTileRenderer:
             'alternation': alternation
         }
     
-    # Include other tile info methods as needed...
+    def get_chain_tile_info(self, world_planner, tile_x, tile_y, block_data, layer):
+        """Get tile info for chain sprites - only connects to other chains"""
+        block_id = block_data.get('id', '')
+        down_block = world_planner.layers[layer].get((tile_x, tile_y + 1), None)
+        
+        # Chains only connect to other chains below
+        down = down_block is not None and down_block.get('id', '') == block_id
+    
+        return {
+            'type': 'chain',
+            'has_chain_below': down
+        }
+    
+    def get_column_tile_info(self, world_planner, tile_x, tile_y, block_data, layer):
+        """Get tile info for column sprites - vertical connection like pillars"""
+        block_id = block_data.get('id', '')
+        up_block = world_planner.layers[layer].get((tile_x, tile_y - 1), None)
+        down_block = world_planner.layers[layer].get((tile_x, tile_y + 1), None)
+        
+        # Columns connect to other columns of the same type
+        up = up_block is not None and up_block.get('id', '') == block_id
+        down = down_block is not None and down_block.get('id', '') == block_id
+    
+        return {
+            'type': 'column',
+            'up': up,
+            'down': down
+        }
+    
     def get_2state_tile_info(self, world_planner, tile_x, tile_y, block_data, layer):
         """Get tile info for 2-state sprites"""
         return {
@@ -676,6 +804,18 @@ class OptimizedTileRenderer:
             'type': 'bedrock_pattern',
             'is_odd_column': tile_x % 2 == 1,
             'is_odd_row': tile_y % 2 == 1
+        }
+    
+    def get_background_quadrant_tile_info(self, world_planner, tile_x, tile_y, block_data, layer):
+        """Get tile info for background quadrant sprites - works in 2x2 groups"""
+        # Determine position within 2x2 group
+        local_x = tile_x % 2  # 0 or 1
+        local_y = tile_y % 2  # 0 or 1
+        
+        return {
+            'type': 'background_quadrant',
+            'local_x': local_x,
+            'local_y': local_y
         }
     
     def draw_all_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
@@ -1099,7 +1239,7 @@ class OptimizedTileRenderer:
             pygame.draw.rect(surface, (255, 0, 255), (screen_x, screen_y, size, size))
     
     def draw_platform_enhanced_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
-        """Optimized platform enhanced sprite drawing"""
+        """Optimized platform enhanced sprite drawing - FIXED: extract full platform height"""
         neighbors = tile_info.get('neighbors', {})
         left = neighbors.get('left', False)
         right = neighbors.get('right', False)
@@ -1108,27 +1248,38 @@ class OptimizedTileRenderer:
         dx = 16 if is_odd_column else 0
         
         if left and right:
-            sprite_rect = pygame.Rect(32 + dx, 0, 16, 16)
+            base_rect = (32 + dx, 0, 16)
         elif left:
-            sprite_rect = pygame.Rect(64, 0, 16, 16)
+            base_rect = (64, 0, 16)
         elif right:
-            sprite_rect = pygame.Rect(16, 0, 16, 16)
+            base_rect = (16, 0, 16)
         else:
-            sprite_rect = pygame.Rect(0, 0, 16, 16)
+            base_rect = (0, 0, 16)
         
         try:
-            if (sprite.get_width() >= sprite_rect.right and 
-                sprite.get_height() >= sprite_rect.bottom):
-                platform_slice = sprite.subsurface(sprite_rect)
-                if size != 16:
-                    scaled_slice = pygame.transform.scale(platform_slice, (size, size))
-                    surface.blit(scaled_slice, (screen_x, screen_y))
+            # Extract the full height of the platform sprite
+            sprite_x, sprite_y, sprite_width = base_rect
+            sprite_height = sprite.get_height()
+            
+            if (sprite.get_width() >= sprite_x + sprite_width and sprite_height > 0):
+                platform_sprite = sprite.subsurface(pygame.Rect(sprite_x, sprite_y, sprite_width, sprite_height))
+                
+                # Calculate proper scaling
+                exact_tiles_tall = sprite_height / 16
+                scaled_width = size
+                scaled_height = int(exact_tiles_tall * size)
+                
+                if scaled_height > 0:
+                    scaled_platform = pygame.transform.scale(platform_sprite, (scaled_width, scaled_height))
+                    # FIXED: Move up by 8 pixels instead of down
+                    offset_y = int(8 * size / 16)
+                    surface.blit(scaled_platform, (screen_x, screen_y - offset_y))
                 else:
-                    surface.blit(platform_slice, (screen_x, screen_y))
+                    pygame.draw.rect(surface, (222, 184, 135), (screen_x, screen_y, size, max(1, size // 8)))
             else:
-                self.draw_standard_sprite_optimized(surface, sprite, screen_x, screen_y, size)
+                pygame.draw.rect(surface, (222, 184, 135), (screen_x, screen_y, size, max(1, size // 8)))
         except:
-            self.draw_standard_sprite_optimized(surface, sprite, screen_x, screen_y, size)
+            pygame.draw.rect(surface, (222, 184, 135), (screen_x, screen_y, size, max(1, size // 8)))
     
     def draw_fence_enhanced_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
         """Optimized fence enhanced sprite drawing"""
@@ -1195,6 +1346,42 @@ class OptimizedTileRenderer:
             else:
                 self.draw_standard_sprite_optimized(surface, sprite, screen_x, screen_y, size)
         except:
+            self.draw_standard_sprite_optimized(surface, sprite, screen_x, screen_y, size)
+    
+    def draw_background_quadrant_sprite_optimized(self, surface, sprite, tile_info, screen_x, screen_y, size):
+        """Optimized background quadrant sprite drawing - consistent 2x2 groups"""
+        local_x = tile_info.get('local_x', 0)
+        local_y = tile_info.get('local_y', 0)
+        
+        # Each 2x2 group forms the same complete 32x32 sprite
+        if local_x == 0 and local_y == 0:
+            # Top-left of 2x2 group: top-left quadrant of sprite
+            src_rect = pygame.Rect(0, 0, 16, 16)
+        elif local_x == 1 and local_y == 0:
+            # Top-right of 2x2 group: top-right quadrant of sprite
+            src_rect = pygame.Rect(16, 0, 16, 16)
+        elif local_x == 0 and local_y == 1:
+            # Bottom-left of 2x2 group: bottom-left quadrant of sprite
+            src_rect = pygame.Rect(0, 16, 16, 16)
+        else:  # local_x == 1 and local_y == 1
+            # Bottom-right of 2x2 group: bottom-right quadrant of sprite
+            src_rect = pygame.Rect(16, 16, 16, 16)
+        
+        try:
+            if (sprite.get_width() >= src_rect.right and 
+                sprite.get_height() >= src_rect.bottom):
+                quadrant = sprite.subsurface(src_rect)
+                
+                if size != 16:
+                    scaled_quadrant = pygame.transform.scale(quadrant, (size, size))
+                    surface.blit(scaled_quadrant, (screen_x, screen_y))
+                else:
+                    surface.blit(quadrant, (screen_x, screen_y))
+            else:
+                # Fallback
+                self.draw_standard_sprite_optimized(surface, sprite, screen_x, screen_y, size)
+        except:
+            # Emergency fallback
             self.draw_standard_sprite_optimized(surface, sprite, screen_x, screen_y, size)
     
     # Include ALL the remaining methods from the original tile_renderer.py
