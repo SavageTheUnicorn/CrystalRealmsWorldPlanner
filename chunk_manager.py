@@ -736,20 +736,20 @@ class OptimizedChunkManager:
         if not hasattr(self, 'immediate_render_chunks'):
             self.immediate_render_chunks = set()
         
-        # First, render all immediate chunks (from brush operations) with no limits
+        # PRIORITY: Render immediate chunks first (from brush operations) with no limits
         immediate_chunks_to_render = []
         for chunk_key in list(self.immediate_render_chunks):
             if chunk_key in visible_chunks and chunk_key in self.chunks:
                 chunk = self.chunks[chunk_key]
-                if chunk.needs_rerender(self.world_planner, base_tile_size):
-                    immediate_chunks_to_render.append(chunk)
+                # Always render immediate chunks, regardless of dirty state
+                immediate_chunks_to_render.append(chunk)
         
         # Render immediate chunks without limits
         for chunk in immediate_chunks_to_render:
             chunk.render(self.world_planner, base_tile_size, self.sprite_cache)
             chunks_rendered += 1
         
-        # Clear the immediate render set
+        # Clear the immediate render set after processing
         self.immediate_render_chunks.clear()
         
         # Then render other chunks with normal limits
@@ -765,16 +765,19 @@ class OptimizedChunkManager:
                 
                 visible_chunks = sorted(visible_chunks, key=chunk_distance)
             
-            # Render remaining chunks
+            # Render remaining chunks (skip immediate chunks that were already rendered)
             for key in visible_chunks:
                 if chunks_rendered >= self.max_chunks_per_frame:
                     break
+                    
+                # Skip if already rendered as immediate chunk
+                if key in immediate_chunks_to_render:
+                    continue
                     
                 if key not in self.chunks:
                     self.chunks[key] = OptimizedChunk(key[0], key[1], self.chunk_size)
                 
                 chunk = self.chunks[key]
-                # Skip if already rendered in immediate phase
                 if chunk.dirty and chunk.needs_rerender(self.world_planner, base_tile_size):
                     chunk.render(self.world_planner, base_tile_size, self.sprite_cache)
                     chunks_rendered += 1
