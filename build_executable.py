@@ -1062,8 +1062,18 @@ def create_modified_main():
             'from block_manager_embedded import BlockManager'
         )
         
-        # Replace the OptimizedBackgroundManager class definition with an import
-        # Find the class definition and replace it
+        # Remove the inline OptimizedBackgroundManager class definition to avoid conflicts
+        # Find the start of the class
+        bg_class_start = main_content.find('class OptimizedBackgroundManager:')
+        if bg_class_start != -1:
+            # Find the start of the next class (UpdateManager)
+            next_class_start = main_content.find('class UpdateManager:', bg_class_start)
+            if next_class_start != -1:
+                # Remove the entire OptimizedBackgroundManager class
+                main_content = main_content[:bg_class_start] + main_content[next_class_start:]
+                print("✅ Removed inline OptimizedBackgroundManager class")
+        
+        # Add embedded BackgroundManager import
         import_replacement = '''
 # Import embedded BackgroundManager
 try:
@@ -1072,7 +1082,11 @@ try:
     print("✅ Using embedded OptimizedBackgroundManager")
 except ImportError:
     USE_EMBEDDED_BG = False
-    print("⚠️ Could not import embedded OptimizedBackgroundManager, using inline version")
+    print("⚠️ Could not import embedded OptimizedBackgroundManager, falling back to error")
+    # If embedded manager fails, we need to exit since we removed the inline class
+    import sys
+    print("❌ No background manager available - embedded version required")
+    sys.exit(1)
 '''
         
         # Insert at the top after imports
@@ -1089,14 +1103,18 @@ except ImportError:
         new_init = """if USE_EMBEDDED_BG:
             self.background_manager = EmbeddedBackgroundManager()
         else:
-            self.background_manager = OptimizedBackgroundManager()"""
+            # This should never happen since we exit above if embedded manager fails
+            print("❌ This should not happen - embedded manager required")
+            import sys
+            sys.exit(1)"""
         
         main_content = main_content.replace(old_init, new_init)
         
         with open('main_embedded.py', 'w', encoding='utf-8') as f:
             f.write(main_content)
         
-        print("✅ Created main_embedded.py with proper background manager integration")
+        print("✅ Created main_embedded.py with proper embedded integration")
+        print("✅ All classes (including UpdateManager) preserved")
         return True
     except Exception as e:
         print(f"❌ Error creating main_embedded.py: {e}")
@@ -1135,6 +1153,7 @@ def create_standalone_spec_file():
     spec_content = """# -*- mode: python ; coding: utf-8 -*-
 
 import sys
+import certifi
 from pathlib import Path
 
 # Analysis of the main script
@@ -1143,7 +1162,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        # NO EXTERNAL FILES - everything is embedded in Python code
+        # Include SSL certificates for HTTPS requests
+        (certifi.where(), 'certifi'),
     ],
     hiddenimports=[
         'pygame',
@@ -1167,7 +1187,11 @@ a = Analysis(
         'background_manager_embedded',
         'constants',
         'tile_renderer',
-        'chunk_manager'
+        'chunk_manager',
+        'urllib',
+        'urllib.request',
+        'ssl',
+        'certifi'
     ],
     hookspath=[],
     hooksconfig={},
@@ -1194,7 +1218,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # Disable UPX to prevent DLL issues
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,  # Set to True for debugging
@@ -1206,14 +1230,14 @@ exe = EXE(
     icon='icon.ico' if Path('icon.ico').exists() else None,
     # CRITICAL: These options ensure 100% standalone
     onefile=True,  # Force single file
-    windowed=True,  # No console window
+    windowed=False,  # Use console mode to avoid DLL issues during updates
 )
 """
     
     try:
         with open("worldplanner_standalone.spec", "w", encoding="utf-8") as f:
             f.write(spec_content)
-        print("✅ Created standalone PyInstaller spec file")
+        print("✅ Created standalone PyInstaller spec file with SSL support and DLL fix")
         return True
     except Exception as e:
         print(f"❌ Error creating spec file: {e}")
@@ -1247,7 +1271,8 @@ def install_requirements():
         'pygame>=2.0.0', 
         'pyinstaller>=5.0',
         'setuptools',
-        'wheel'
+        'wheel',
+        'certifi'  # Add certifi for SSL certificates
     ]
     
     for req in requirements:
