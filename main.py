@@ -7,7 +7,7 @@ from tkinter import Tk, filedialog
 import math
 import json
 
-from constants import Tool, Layer, TileConnection
+from constants import Tool, Layer, TileConnection, APP_VERSION
 from tile_renderer import OptimizedTileRenderer  # Use optimized version
 from block_manager import BlockManager
 from chunk_manager import OptimizedChunkManager  # Use optimized version
@@ -208,6 +208,167 @@ class OptimizedBackgroundManager:
             return self.backgrounds[self.current_background]['name']
         return "Unknown"
 
+class UpdateManager:
+    """Lightweight auto-update system using GitHub releases"""
+    
+    def __init__(self, current_version):
+        self.current_version = str(current_version).strip()
+        self.github_api_url = "https://api.github.com/repos/SavageTheUnicorn/CrystalRealmsWorldPlanner/releases/latest"
+        self.update_available = False
+        self.latest_version = None
+        self.download_url = None
+        self.check_complete = False
+        
+    def check_for_updates(self):
+        """Check GitHub API for updates - non-blocking"""
+        try:
+            import threading
+            # Use daemon=False for executables
+            thread = threading.Thread(target=self._check_updates_thread, daemon=False)
+            thread.start()
+        except Exception as e:
+            print(f"Failed to start update check thread: {e}")
+            self.check_complete = True
+    
+    def _check_updates_thread(self):
+        """Background thread to check for updates"""
+        try:
+            import urllib.request
+            import json
+            import ssl
+            
+            # Create SSL context that works in executable
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            
+            request = urllib.request.Request(
+                self.github_api_url,
+                headers={'User-Agent': 'WorldPlanner-UpdateChecker/1.0'}
+            )
+            
+            with urllib.request.urlopen(request, timeout=10, context=ssl_context) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode())
+                    self.latest_version = data.get('tag_name', '').lstrip('v')
+                    
+                    if self._is_newer_version(self.latest_version):
+                        # Find Windows executable in assets
+                        for asset in data.get('assets', []):
+                            if asset['name'].lower().endswith('.exe'):
+                                self.download_url = asset['browser_download_url']
+                                self.update_available = True
+                                print(f"✅ Update available: {self.latest_version}")
+                                break
+                    else:
+                        print(f"✅ Up to date: {self.current_version}")
+        except Exception as e:
+            print(f"Update check failed (this is normal): {e}")
+        finally:
+            self.check_complete = True
+    
+    def _is_newer_version(self, remote_version):
+        """Compare version strings (simple semantic versioning)"""
+        try:
+            if not remote_version or not self.current_version:
+                return False
+                
+            current_parts = [int(x) for x in self.current_version.split('.')]
+            remote_parts = [int(x) for x in remote_version.split('.')]
+            
+            # Pad shorter version with zeros
+            max_len = max(len(current_parts), len(remote_parts))
+            current_parts += [0] * (max_len - len(current_parts))
+            remote_parts += [0] * (max_len - len(remote_parts))
+            
+            return remote_parts > current_parts
+        except Exception as e:
+            print(f"Version comparison failed: {e}")
+            return False
+    
+    def download_and_install_update(self):
+        """Download and install update"""
+        if not self.update_available or not self.download_url:
+            return False
+        
+        try:
+            import urllib.request
+            import os
+            import subprocess
+            import sys
+            import ssl
+            
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            
+            print(f"Downloading update {self.latest_version}...")
+            
+            # Get the actual name of the current executable
+            if getattr(sys, 'frozen', False):
+                # Running as PyInstaller executable
+                current_exe_path = sys.argv[0]
+                current_exe_name = os.path.basename(current_exe_path)
+            else:
+                # Running from source (fallback)
+                current_exe_name = "WorldPlanner.exe"
+            
+            print(f"Current executable name: {current_exe_name}")
+            
+            request = urllib.request.Request(
+                self.download_url,
+                headers={'User-Agent': 'WorldPlanner-UpdateChecker/1.0'}
+            )
+            
+            with urllib.request.urlopen(request, context=ssl_context) as response:
+                with open("WorldPlanner_new.exe", 'wb') as f:
+                    f.write(response.read())
+            
+            # Dynamic batch script using the actual executable name
+            batch_script = f"""@echo off
+            echo Updating {current_exe_name}...
+            
+            REM Kill any remaining processes with this name
+            taskkill /f /im "{current_exe_name}" >nul 2>&1
+            
+            REM Remove old version
+            if exist "{current_exe_name}" del "{current_exe_name}"
+            
+            REM Install new version with the correct name
+            if exist WorldPlanner_new.exe ren WorldPlanner_new.exe "{current_exe_name}"
+            
+            REM Start new version with full path
+            timeout /t 1 /nobreak >nul
+            if exist "{current_exe_name}" (
+                echo Starting {current_exe_name}...
+                start "" "%~dp0{current_exe_name}"
+            )
+            
+            REM Clean up
+            del "%~f0"
+            """
+            
+            with open("update.bat", "w") as f:
+                f.write(batch_script)
+            
+            print(f"Starting update process for {current_exe_name}...")
+            
+            # Start batch file with no window
+            subprocess.Popen(
+                ["cmd", "/c", "update.bat"], 
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                cwd=os.getcwd()
+            )
+            
+            # Exit the application immediately
+            import pygame
+            pygame.event.post(pygame.event.Event(pygame.QUIT))
+            
+            return True
+            
+        except Exception as e:
+            print(f"Update installation failed: {e}")
+            return False
 
 class OptimizedTooltipManager:
     """Optimized tooltip manager with surface caching and batch rendering"""
@@ -492,7 +653,7 @@ class OptimizedHotkeyHelpManager:
         surface.blit(self.surface, (x, y))
 
 class OptimizedBrushManager:
-    """High-performance brush manager with pre-calculated patterns and spatial indexing"""
+    """High-performance brush manager with real-time visual feedback and optimized chunk updates"""
     
     def __init__(self, world_planner):
         self.world_planner = world_planner
@@ -576,64 +737,315 @@ class OptimizedBrushManager:
         self.stroke_timer = pygame.time.get_ticks()
     
     def add_brush_position(self, center_x, center_y, is_erase=False):
-        """Add position to current brush stroke"""
+        """OPTIMIZED: Pre-calculated bounds with proper sprite origin alignment and brush replacement"""
         if not self.active_stroke:
             self.start_brush_stroke()
         
-        # Skip if same position as last brush
-        if self.last_brush_pos == (center_x, center_y):
-            return
-        self.last_brush_pos = (center_x, center_y)
+        # INTERPOLATION FIX: Fill gaps between mouse positions
+        current_pos = (center_x, center_y)
+        positions_to_process = [current_pos]
         
-        # Get brush pattern
+        if self.last_brush_pos and self.last_brush_pos != current_pos:
+            positions_to_process = self.interpolate_brush_positions(self.last_brush_pos, current_pos)
+        
+        self.last_brush_pos = current_pos
+        
+        # Get brush pattern (cached)
         pattern = self.get_brush_pattern(self.world_planner.brush_size, self.world_planner.brush_shape)
+        layer_dict = self.world_planner.layers[self.world_planner.active_layer]
         
-        # Process all positions in brush pattern
+        # PRE-CALCULATE sprite bounds once for the entire brush operation
+        sprite_bounds = None
+        grid_width, grid_height = 1, 1
+        
+        if not is_erase and self.world_planner.selected_block:
+            block_data = self.world_planner.create_block_data_from_selected()
+            if block_data:
+                sprite = self.world_planner.block_manager.get_sprite(block_data.get('id', ''))
+                if sprite:
+                    tile_mode = block_data.get('tileMode', 'standard')
+                    sprite_bounds = self.world_planner.tile_renderer.calculate_sprite_bounds(sprite, tile_mode)
+                    
+                    # Calculate grid size for proper alignment
+                    if sprite_bounds:
+                        min_x = min(dx for dx, dy in sprite_bounds)
+                        max_x = max(dx for dx, dy in sprite_bounds)
+                        min_y = min(dy for dx, dy in sprite_bounds)
+                        max_y = max(dy for dx, dy in sprite_bounds)
+                        grid_width = max_x - min_x + 1
+                        grid_height = max_y - min_y + 1
+        
+        # Track new positions for efficient chunk updates
+        new_positions_this_batch = []
+        
+        # Process all interpolated positions with optimized collision detection
+        for brush_center_x, brush_center_y in positions_to_process:
+            for dx, dy in pattern:
+                tile_x, tile_y = brush_center_x + dx, brush_center_y + dy
+                
+                if not self.world_planner.is_valid_position(tile_x, tile_y):
+                    continue
+                
+                if is_erase:
+                    # FIXED: Check for bedrock before erasing
+                    if self.world_planner.is_bedrock_position(tile_y):
+                        continue
+                        
+                    # Simple erase - just remove if exists (but not bedrock)
+                    pos = (tile_x, tile_y)
+                    if pos in layer_dict:
+                        del layer_dict[pos]
+                        self.stroke_positions.add(pos)
+                        new_positions_this_batch.append(pos)
+                else:
+                    # OPTIMIZED PLACEMENT with brush replacement behavior
+                    if sprite_bounds and len(sprite_bounds) > 1:
+                        # Multi-tile sprite - calculate proper origin for bottom alignment
+                        sprite_origin_x, sprite_origin_y = self.calculate_sprite_origin(tile_x, tile_y, sprite_bounds)
+                        
+                        # Align to grid using the calculated origin
+                        aligned_x, aligned_y = self.align_to_sprite_grid(sprite_origin_x, sprite_origin_y, grid_width, grid_height)
+                        
+                        # Move collision check position down by 1 tile to match preview
+                        collision_check_y = aligned_y + 1
+                        
+                        # Check basic validity (world bounds and bedrock only)
+                        can_place = True
+                        for bound_dx, bound_dy in sprite_bounds:
+                            check_pos = (aligned_x + bound_dx, collision_check_y + bound_dy)
+                            if (not self.world_planner.is_valid_position(check_pos[0], check_pos[1]) or
+                                self.world_planner.is_bedrock_position(check_pos[1])):
+                                can_place = False
+                                break
+                        
+                        if can_place:
+                            # Remove any existing sprites that would be overlapped (brush replacement)
+                            sprites_to_remove = set()
+                            for bound_dx, bound_dy in sprite_bounds:
+                                check_pos = (aligned_x + bound_dx, collision_check_y + bound_dy)
+                                origin_pos, _ = self.fast_find_sprite_at_position(check_pos[0], check_pos[1])
+                                if origin_pos:
+                                    sprites_to_remove.add(origin_pos)
+                            
+                            # Remove existing sprites
+                            for origin_pos in sprites_to_remove:
+                                if origin_pos in layer_dict:
+                                    del layer_dict[origin_pos]
+                            
+                            block_data = self.world_planner.create_block_data_from_selected()
+                            if block_data:
+                                # FIXED: Move actual sprite placement down by 2 tiles total to fix rendering position
+                                actual_placement_y = aligned_y + 1
+                                layer_dict[(aligned_x, actual_placement_y)] = block_data.copy()
+                                self.stroke_positions.add((aligned_x, actual_placement_y))
+                                new_positions_this_batch.append((aligned_x, actual_placement_y))
+                    else:
+                        # Single tile sprite - simple placement with replacement
+                        pos = (tile_x, tile_y)
+                        if not self.world_planner.is_bedrock_position(tile_y):
+                            block_data = self.world_planner.create_block_data_from_selected()
+                            if block_data:
+                                # Remove existing sprite if any (brush replacement behavior)
+                                if pos in layer_dict:
+                                    del layer_dict[pos]
+                                layer_dict[pos] = block_data.copy()
+                                self.stroke_positions.add(pos)
+                                new_positions_this_batch.append(pos)
+        
+        # Simple tracking for final update
+        if new_positions_this_batch:
+            self.immediate_visual_update(new_positions_this_batch)
+
+    def interpolate_brush_positions(self, start_pos, end_pos):
+        """Fill gaps between mouse positions for smooth brush strokes"""
+        start_x, start_y = start_pos
+        end_x, end_y = end_pos
+        
+        # Calculate distance and steps needed
+        dx = end_x - start_x
+        dy = end_y - start_y
+        distance = max(abs(dx), abs(dy))
+        
+        if distance <= 1:
+            return [end_pos]
+        
+        # Generate interpolated positions
+        positions = []
+        for i in range(distance + 1):
+            t = i / distance
+            interp_x = int(start_x + dx * t)
+            interp_y = int(start_y + dy * t)
+            positions.append((interp_x, interp_y))
+        
+        return positions
+
+    def calculate_sprite_origin(self, click_x, click_y, sprite_bounds):
+        """Calculate proper sprite origin for bottom-aligned placement"""
+        if not sprite_bounds:
+            return click_x, click_y
+        
+        # Find the bottom-most tile of the sprite
+        min_y = min(dy for dx, dy in sprite_bounds)
+        
+        # FIXED: Adjust origin so bottom of sprite aligns with clicked position
+        # Move down by 1 tile to fix the "1 tile too high" issue
+        origin_x = click_x
+        origin_y = click_y - min_y - 1  # Added +1 to move sprites down by 1 tile
+        
+        return origin_x, origin_y
+
+    def align_to_sprite_grid(self, tile_x, tile_y, grid_width, grid_height):
+        """Align sprite placement to grid boundaries with bottom-alignment for tall sprites"""
+        # Calculate grid origin
+        grid_origin_x = 0
+        grid_origin_y = 0
+        
+        # Snap to grid
+        aligned_x = ((tile_x - grid_origin_x) // grid_width) * grid_width + grid_origin_x
+        aligned_y = ((tile_y - grid_origin_y) // grid_height) * grid_height + grid_origin_y
+        
+        return aligned_x, aligned_y
+
+    def fast_multi_tile_collision_check(self, origin_x, origin_y, sprite_bounds, layer_dict):
+        """Fast collision check using pre-calculated sprite bounds"""
+        # Check if any tile in the sprite footprint is occupied
+        for dx, dy in sprite_bounds:
+            check_pos = (origin_x + dx, origin_y + dy)
+            
+            # Basic world bounds check
+            if not self.world_planner.is_valid_position(check_pos[0], check_pos[1]):
+                return False
+            if self.world_planner.is_bedrock_position(check_pos[1]):
+                return False
+                
+            # Simple occupancy check
+            if check_pos in layer_dict:
+                return False
+        
+        return True
+
+    def get_brush_collision_preview(self, center_x, center_y):
+        """Fast collision preview for brush with proper sprite origin"""
+        if not self.world_planner.selected_block:
+            return {}
+        
+        pattern = self.get_brush_pattern(self.world_planner.brush_size, self.world_planner.brush_shape)
+        layer_dict = self.world_planner.layers[self.world_planner.active_layer]
+        
+        # Pre-calculate sprite info once
+        block_data = self.world_planner.create_block_data_from_selected()
+        if not block_data:
+            return {}
+        
+        sprite = self.world_planner.block_manager.get_sprite(block_data.get('id', ''))
+        sprite_bounds = [(0, 0)]  # Default single tile
+        grid_width, grid_height = 1, 1
+        
+        if sprite:
+            tile_mode = block_data.get('tileMode', 'standard')
+            sprite_bounds = self.world_planner.tile_renderer.calculate_sprite_bounds(sprite, tile_mode)
+            
+            if sprite_bounds and len(sprite_bounds) > 1:
+                min_x = min(dx for dx, dy in sprite_bounds)
+                max_x = max(dx for dx, dy in sprite_bounds)
+                min_y = min(dy for dx, dy in sprite_bounds)
+                max_y = max(dy for dx, dy in sprite_bounds)
+                grid_width = max_x - min_x + 1
+                grid_height = max_y - min_y + 1
+        
+        # Calculate collision state for each brush position
+        collision_info = {}
+        
         for dx, dy in pattern:
             tile_x, tile_y = center_x + dx, center_y + dy
             
             if not self.world_planner.is_valid_position(tile_x, tile_y):
                 continue
-            if self.world_planner.is_bedrock_position(tile_y):
-                continue
             
-            if is_erase:
-                # Fast erase using spatial index
-                origin_pos, block_data = self.fast_find_sprite_at_position(tile_x, tile_y)
-                if origin_pos and origin_pos in self.world_planner.layers[self.world_planner.active_layer]:
-                    del self.world_planner.layers[self.world_planner.active_layer][origin_pos]
-                    self.stroke_positions.add(origin_pos)
-                    self.spatial_index.pop((tile_x, tile_y), None)  # Update index immediately
+            if len(sprite_bounds) > 1:
+                # Multi-tile sprite with proper origin calculation
+                sprite_origin_x, sprite_origin_y = self.calculate_sprite_origin(tile_x, tile_y, sprite_bounds)
+                aligned_x, aligned_y = self.align_to_sprite_grid(sprite_origin_x, sprite_origin_y, grid_width, grid_height)
+                
+                # FIXED: Move preview down by 1 tile for visual alignment
+                preview_aligned_y = aligned_y + 1
+                
+                # Use the SAME position for collision check as actual placement
+                has_collision = not self.fast_multi_tile_collision_check(aligned_x, preview_aligned_y, sprite_bounds, layer_dict)
+                collision_info[(tile_x, tile_y)] = {
+                    'has_collision': has_collision,
+                    'aligned_pos': (aligned_x, preview_aligned_y),  # Use preview_aligned_y for visual
+                    'sprite_bounds': sprite_bounds
+                }
             else:
-                # Fast place using spatial index
-                if not self.fast_collision_check(tile_x, tile_y):
-                    block_data = self.world_planner.create_block_data_from_selected()
-                    if block_data:
-                        self.world_planner.layers[self.world_planner.active_layer][(tile_x, tile_y)] = block_data.copy()
-                        self.stroke_positions.add((tile_x, tile_y))
-                        self.spatial_index[(tile_x, tile_y)] = (tile_x, tile_y)  # Update index immediately
+                # Single tile sprite
+                has_collision = ((tile_x, tile_y) in layer_dict or 
+                            self.world_planner.is_bedrock_position(tile_y))
+                collision_info[(tile_x, tile_y)] = {
+                    'has_collision': has_collision,
+                    'aligned_pos': (tile_x, tile_y),
+                    'sprite_bounds': sprite_bounds
+                }
+        
+        return collision_info
+
+    def immediate_visual_update(self, new_positions):
+        """Simplified: Just track positions for final update"""
+        if not hasattr(self, 'pending_updates'):
+            self.pending_updates = []
+        
+        self.pending_updates.extend(new_positions)
     
     def should_update_chunks(self):
         """Check if enough time has passed to update chunks"""
         return pygame.time.get_ticks() - self.stroke_timer > self.stroke_batch_delay
     
     def finish_brush_stroke(self, force=False):
-        """Finish current brush stroke and update chunks"""
+        """Finish current brush stroke with final optimization pass"""
         if not self.active_stroke:
             return
             
-        if not force and not self.should_update_chunks():
-            return
-        
-        # Batch update chunks for all affected positions
-        if self.stroke_positions:
-            self.world_planner.chunk_manager.force_update_affected_chunks(list(self.stroke_positions))
+        # Process any remaining pending updates
+        if hasattr(self, 'pending_updates') and self.pending_updates:
+            self.pending_updates.clear()
         
         # Reset stroke state
         self.active_stroke = False
-        self.stroke_positions.clear()
         self.last_brush_pos = None
-        self.index_dirty = True  # Mark for rebuild on next operation
+        stroke_positions = list(self.stroke_positions)
+        self.stroke_positions.clear()
+        
+        # Clean up batch tracking
+        if hasattr(self, 'pending_updates'):
+            delattr(self, 'pending_updates')
+        
+        # FIXED: Always mark spatial index dirty when stroke ends
+        self.index_dirty = True
+        
+        # FIXED: Force chunk update for ALL stroke positions, not just first 50
+        if stroke_positions:
+            # Force immediate chunk updates for all affected positions
+            self.world_planner.chunk_manager.force_update_affected_chunks(stroke_positions)
+            
+            # FIXED: Force immediate visual refresh for erase operations
+            self.world_planner.force_immediate_chunk_update()
+            
+            # FIXED: Additional invalidation for erase operations to ensure visual update
+            if force:
+                # Get all affected chunks and force them to re-render
+                affected_chunks = set()
+                for pos in stroke_positions:
+                    chunk_key = self.world_planner.chunk_manager.get_chunk_key(pos[0], pos[1])
+                    affected_chunks.add(chunk_key)
+                
+                # Force each affected chunk to completely re-render
+                for chunk_key in affected_chunks:
+                    if chunk_key in self.world_planner.chunk_manager.chunks:
+                        chunk = self.world_planner.chunk_manager.chunks[chunk_key]
+                        chunk.dirty = True
+                        chunk.blocks_hash = None
+                        chunk.last_zoom = None
+                        chunk.surface = None  # Force surface recreation
     
     def invalidate_spatial_index(self):
         """Mark spatial index as needing rebuild"""
@@ -643,9 +1055,10 @@ class OptimizedWorldPlanner:
     """Optimized World Planner with comprehensive performance improvements"""
     
     def __init__(self):
+        from constants import Tool, Layer, TileConnection, APP_VERSION
         # Initialize pygame with optimization hints
         pygame.init()
-        pygame.display.set_caption("Game World Planner - Optimized Edition")
+        pygame.display.set_caption("Crystal Realms World Planner - made by SavageTheUnicorn")
         
         # Set optimization environment variables
         os.environ['SDL_VIDEO_CENTERED'] = '1'
@@ -710,8 +1123,8 @@ class OptimizedWorldPlanner:
         self.camera_y = 0
         
         # World size limits
-        self.world_width = 300
-        self.world_height = 170
+        self.world_width = 301
+        self.world_height = 171
         self.bedrock_rows = 6
         
         # Game state
@@ -721,6 +1134,7 @@ class OptimizedWorldPlanner:
             Layer.MIDGROUND: {}
         }
         self.active_tool = Tool.PLACE
+        self.previous_tool = Tool.PLACE
         self.selected_block = None
         self.is_dragging = False
         self.last_mouse_pos = (0, 0)
@@ -733,6 +1147,11 @@ class OptimizedWorldPlanner:
         # Brush settings
         self.brush_size = 1
         self.brush_shape = "square"
+        
+        # Custom brush size input
+        self.is_inputting_brush_size = False
+        self.custom_brush_text = ""
+        self.custom_brush_cursor_pos = 0
         
         # Display settings
         self.show_borders = False
@@ -828,6 +1247,32 @@ class OptimizedWorldPlanner:
         self.last_camera_update = 0
         self.camera_update_threshold = 16  # ~60fps throttling
         
+        # Mouse coordinate tracking
+        self.mouse_grid_x = 0
+        self.mouse_grid_y = 0
+        self.show_coordinates = True
+        
+        # Autosave system
+        self.autosave_timer = 0
+        self.autosave_interval = 60000  # 1 minute in milliseconds
+        self.max_autosave_files = 30
+        self.autosave_directory = "autosaves"
+        self.ensure_autosave_directory()
+        self.update_manager = None
+        self.update_check_attempted = False
+        self.last_update_state = False
+        self.update_init_timer = pygame.time.get_ticks() + 3000
+    
+    def ensure_autosave_directory(self):
+        """Ensure autosave directory exists"""
+        try:
+            if not os.path.exists(self.autosave_directory):
+                os.makedirs(self.autosave_directory)
+                print(f"Created autosave directory: {self.autosave_directory}")
+        except Exception as e:
+            print(f"Warning: Could not create autosave directory: {e}")
+            self.autosave_directory = None  # Disable autosave if directory creation fails
+    
     def place_bedrock(self):
         """Place bedrock sprites in bottom rows of the world"""
         # Find a bedrock sprite from the bedrockandwater directory
@@ -948,6 +1393,12 @@ class OptimizedWorldPlanner:
         placed_block_data = block_data.copy()
         self.layers[self.active_layer][(tile_x, tile_y)] = placed_block_data
         
+        # Clear selection after any block placement
+        if self.selection:
+            self.selection = None
+            self.selection_start = None
+            self.init_ui()
+        
         # Get all tiles this sprite occupies and invalidate chunks
         sprite = self.block_manager.get_sprite(block_data.get('id', ''))
         occupied_tiles = self.tile_renderer.get_sprite_occupied_tiles(tile_x, tile_y, block_data, sprite)
@@ -1022,8 +1473,8 @@ class OptimizedWorldPlanner:
 
     def init_ui(self):
         """Initialize the UI components with caching optimizations"""
-        # Clear selection if not using select tool
-        if self.active_tool != Tool.SELECT:
+        # Clear selection only if not using select or paste tool
+        if self.active_tool not in [Tool.SELECT, Tool.PASTE]:
             if self.selection is not None or self.selection_start is not None:
                 self.selection = None
                 self.selection_start = None
@@ -1031,10 +1482,10 @@ class OptimizedWorldPlanner:
         # Reset buttons
         self.buttons = {}
         self.toolbuttons = {}
-
+    
         # Fixed buttons at the top of the toolbar
         button_y = 40
-
+    
         # Tool buttons - first row
         tool_button_width = (self.toolbar_width - 20) // 4
         for i, tool in enumerate([Tool.PLACE, Tool.BRUSH, Tool.FILL, Tool.ERASE]):
@@ -1044,21 +1495,21 @@ class OptimizedWorldPlanner:
                 'text': tool.name.capitalize(),
                 'active': tool == self.active_tool
             }
-
+    
         button_y += 40
-
-        # Tool buttons - second row
+    
+        # Tool buttons - second row (modified to include FLIP between SELECT and PASTE)
         tool_names = {
             Tool.SELECT: "Select",
             Tool.PASTE: "Paste", 
             Tool.EYEDROPPER: "Pick"
         }
-
+    
         total_width = self.toolbar_width - 20
         button_gap = 5
         num_buttons = len(tool_names)
         button_width = (total_width - (button_gap * (num_buttons - 1))) // num_buttons
-
+    
         for i, (tool, name) in enumerate(tool_names.items()):
             x = 10 + i * (button_width + button_gap)
             self.toolbuttons[tool] = {
@@ -1066,9 +1517,9 @@ class OptimizedWorldPlanner:
                 'text': name,
                 'active': tool == self.active_tool
             }
-
+    
         button_y += 40
-
+    
         # UNDO/REDO BUTTONS
         undo_redo_button_width = (self.toolbar_width - 30) // 2
         
@@ -1085,7 +1536,7 @@ class OptimizedWorldPlanner:
             'action': self.undo,
             'enabled': self.undo_manager.can_undo()
         }
-
+    
         # Redo button
         redo_text = "Redo"
         if self.undo_manager.can_redo():
@@ -1099,9 +1550,27 @@ class OptimizedWorldPlanner:
             'action': self.redo,
             'enabled': self.undo_manager.can_redo()
         }
-
+    
         button_y += 40
-
+    
+        # FLIP BUTTONS (only show when selection exists and tool is SELECT or PASTE)
+        if self.selection and self.active_tool in [Tool.SELECT, Tool.PASTE]:
+            flip_button_width = (self.toolbar_width - 30) // 2
+            
+            self.buttons['flip_x'] = {
+                'rect': pygame.Rect(10, button_y, flip_button_width, 30),
+                'text': 'Flip X',
+                'action': self.flip_selection_horizontal
+            }
+    
+            self.buttons['flip_y'] = {
+                'rect': pygame.Rect(20 + flip_button_width, button_y, flip_button_width, 30),
+                'text': 'Flip Y',
+                'action': self.flip_selection_vertical
+            }
+    
+            button_y += 40
+    
         # Layer buttons
         layer_button_width = (self.toolbar_width - 30) // 2
         self.buttons['layer_bg'] = {
@@ -1110,23 +1579,23 @@ class OptimizedWorldPlanner:
             'active': self.active_layer == Layer.BACKGROUND,
             'action': lambda: self.set_active_layer(Layer.BACKGROUND)
         }
-
+    
         self.buttons['layer_mid'] = {
             'rect': pygame.Rect(20 + layer_button_width, button_y, layer_button_width, 30),
             'text': 'Foreground',
             'active': self.active_layer == Layer.MIDGROUND,
             'action': lambda: self.set_active_layer(Layer.MIDGROUND)
         }
-
+    
         button_y += 40
-
+    
         # WORLD BACKGROUND CONTROLS
         self.buttons['background_label'] = {
             'rect': pygame.Rect(10, button_y, self.toolbar_width - 20, 25),
             'text': f'World Background: {self.background_manager.get_current_background_name()}'
         }
         button_y += 35
-
+    
         # Background selection buttons
         bg_button_width = (self.toolbar_width - 40) // 3
         
@@ -1148,19 +1617,21 @@ class OptimizedWorldPlanner:
             'text': 'Next >',
             'action': self.next_background
         }
-
+    
         button_y += 40
-
-        # Add brush size buttons when brush tool is active
+    
+        # Add brush size buttons when brush tool is active - MODIFIED FOR CUSTOM INPUT
         if self.active_tool == Tool.BRUSH or self.active_tool == Tool.ERASE:
             self.buttons['brush_size_label'] = {
                 'rect': pygame.Rect(10, button_y, self.toolbar_width - 20, 30),
                 'text': f'Brush Size: {self.brush_size}'
             }
             button_y += 40
-
+    
             size_button_width = (self.toolbar_width - 30) // 3
-            for i, size in enumerate([1, 3, 5]):
+            
+            # Buttons for size 1 and 3
+            for i, size in enumerate([1, 3]):
                 x = 10 + i * (size_button_width + 5)
                 self.buttons[f'brush_size_{size}'] = {
                     'rect': pygame.Rect(x, button_y, size_button_width, 30),
@@ -1168,69 +1639,80 @@ class OptimizedWorldPlanner:
                     'action': lambda s=size: self.set_brush_size(s),
                     'active': self.brush_size == size
                 }
-
+    
+            # Custom input box instead of size 5 button
+            x = 10 + 2 * (size_button_width + 5)
+            display_text = f"Custom: {self.custom_brush_text}" if self.is_inputting_brush_size else f"Custom ({self.brush_size})" if self.brush_size not in [1, 3] else "Custom"
+            self.buttons['brush_size_custom'] = {
+                'rect': pygame.Rect(x, button_y, size_button_width, 30),
+                'text': display_text,
+                'action': self.activate_brush_size_input,
+                'active': self.brush_size not in [1, 3],
+                'is_custom_input': True
+            }
+    
             button_y += 40
-
+    
             self.buttons['brush_square'] = {
                 'rect': pygame.Rect(10, button_y, layer_button_width, 30),
                 'text': 'Square',
                 'action': lambda: self.set_brush_shape('square'),
                 'active': self.brush_shape == 'square'
             }
-
+    
             self.buttons['brush_circle'] = {
                 'rect': pygame.Rect(20 + layer_button_width, button_y, layer_button_width, 30),
                 'text': 'Circle',
                 'action': lambda: self.set_brush_shape('circle'),
                 'active': self.brush_shape == 'circle'
             }
-
+    
             button_y += 40
-
+    
         # Show/hide grid button
         self.buttons['toggle_grid'] = {
             'rect': pygame.Rect(10, button_y, layer_button_width, 30),
             'text': 'Toggle Grid',
             'action': self.toggle_grid
         }
-
+    
         self.buttons['toggle_borders'] = {
             'rect': pygame.Rect(20 + layer_button_width, button_y, layer_button_width, 30),
             'text': 'Toggle Borders',
             'action': self.toggle_borders
         }
-
+    
         button_y += 40
-
+    
         # File operations
         self.buttons['save'] = {
             'rect': pygame.Rect(10, button_y, layer_button_width, 30),
             'text': 'Save World',
             'action': self.save_world
         }
-
+    
         self.buttons['load'] = {
             'rect': pygame.Rect(20 + layer_button_width, button_y, layer_button_width, 30),
             'text': 'Load World',
             'action': self.load_world
         }
-
+    
         button_y += 40
-
+    
         self.buttons['export'] = {
             'rect': pygame.Rect(10, button_y, layer_button_width, 30),
             'text': 'Export Image',
             'action': self.export_image
         }
-
+    
         self.buttons['clear'] = {
             'rect': pygame.Rect(20 + layer_button_width, button_y, layer_button_width, 30),
             'text': 'Clear World',
             'action': self.clear_world
         }
-
+    
         button_y += 40
-
+    
         # STATE CONTROLS
         if self.selected_block and 'tileMode' in self.selected_block:
             tile_mode = self.selected_block['tileMode']
@@ -1255,57 +1737,69 @@ class OptimizedWorldPlanner:
                     'action': lambda: self.cycle_block_state(self.selected_block, 1)
                 }
                 button_y += 40
-
+    
         self.buttons['upload_sprite'] = {
             'rect': pygame.Rect(10, button_y, self.toolbar_width - 20, 30),
             'text': 'Upload Sprites',
             'action': self.open_sprite_dialog
         }
-
+    
         button_y += 40
-
+        
+        # Update notification
+        if (hasattr(self, 'update_manager') and 
+            self.update_manager is not None and 
+            self.update_manager.update_available):
+            self.buttons['update_available'] = {
+                'rect': pygame.Rect(10, button_y, self.toolbar_width - 20, 30),
+                'text': f'Update to version {self.update_manager.latest_version}',
+                'action': self.install_update,
+                'update_button': True
+            }
+            button_y += 40
+    
         self.buttons['search_bar'] = {
             'rect': pygame.Rect(10, button_y, self.toolbar_width - 20, 30),
             'text': f'Search: {self.search_text}',
             'action': self.activate_search,
             'is_search': True
         }
-
+    
         button_y += 40
-
+    
         # Recent blocks section
         if self.recent_blocks:
             self.buttons['recent_blocks'] = {
                 'rect': pygame.Rect(10, button_y, self.toolbar_width - 20, 30),
                 'text': 'Recent Blocks'
             }
-
+    
             button_y += 40
-
+    
             block_size = 40
             padding = 5
             blocks_per_row = (self.toolbar_width - 20) // (block_size + padding)
-
+    
             for j, block in enumerate(self.recent_blocks):
                 row = j // blocks_per_row
                 col = j % blocks_per_row
-
+    
                 x = 10 + col * (block_size + padding)
                 y = button_y + row * (block_size + padding)
-
+    
                 self.buttons[f'recent_{j}'] = {
                     'rect': pygame.Rect(x, y, block_size, block_size),
                     'block': block,
                     'selected': block == self.selected_block,
                     'is_block': True
                 }
-
+    
             rows = (len(self.recent_blocks) + blocks_per_row - 1) // blocks_per_row
             button_y += rows * (block_size + padding) + 10
-
+    
         # Add block categories
         button_y = self.add_block_categories(button_y)
-
+    
         # Add auto-tiling information
         if self.selected_block and 'tileMode' in self.selected_block:
             tile_mode = self.selected_block['tileMode']
@@ -1316,7 +1810,7 @@ class OptimizedWorldPlanner:
                 'text': f"Tiling Mode: {mode_name}"
             }
             button_y += 40
-
+    
         # Set the maximum scroll value
         self.toolbar_max_scroll = max(0, button_y - self.screen_height + 20)
         self.toolbar_scroll_y = min(self.toolbar_scroll_y, self.toolbar_max_scroll)
@@ -1426,6 +1920,13 @@ class OptimizedWorldPlanner:
         self.is_searching = True
         self.search_cursor_pos = len(self.search_text)
 
+    def activate_brush_size_input(self):
+        """Activate the custom brush size input"""
+        self.is_inputting_brush_size = True
+        self.custom_brush_text = str(self.brush_size) if self.brush_size not in [1, 3] else ""
+        self.custom_brush_cursor_pos = len(self.custom_brush_text)
+        self.init_ui()
+
     def previous_background(self):
         """Switch to the previous background"""
         bg_list = self.background_manager.get_background_list()
@@ -1496,6 +1997,78 @@ class OptimizedWorldPlanner:
                 print(f"World saved to {file_path}")
         except Exception as e:
             print(f"Error saving world: {e}")
+            
+    def perform_autosave(self):
+        """Perform an autosave operation"""
+        if not self.autosave_directory:
+            return  # Autosave disabled
+        
+        try:
+            # Create filename with timestamp
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"autosave_{timestamp}.json"
+            filepath = os.path.join(self.autosave_directory, filename)
+            
+            # Use existing save logic
+            save_data = {
+                'layers': {},
+                'world_width': self.world_width,
+                'world_height': self.world_height,
+                'bedrock_rows': self.bedrock_rows,
+                'background': self.background_manager.current_background,
+                'autosave': True,
+                'timestamp': timestamp
+            }
+    
+            for layer_enum, layer_dict in self.layers.items():
+                layer_name = layer_enum.name
+                save_data['layers'][layer_name] = {}
+    
+                for pos, block_data in layer_dict.items():
+                    save_data['layers'][layer_name][f"{pos[0]},{pos[1]}"] = block_data
+    
+            with open(filepath, 'w') as f:
+                json.dump(save_data, f)
+            
+            print(f"Autosaved to {filepath}")
+            
+            # Clean up old autosave files
+            self.cleanup_old_autosaves()
+            
+        except Exception as e:
+            print(f"Autosave failed: {e}")
+    
+    def cleanup_old_autosaves(self):
+        """Remove old autosave files, keeping only the latest max_autosave_files"""
+        if not self.autosave_directory or not os.path.exists(self.autosave_directory):
+            return
+        
+        try:
+            # Get all autosave files
+            autosave_files = []
+            for filename in os.listdir(self.autosave_directory):
+                if filename.startswith("autosave_") and filename.endswith(".json"):
+                    filepath = os.path.join(self.autosave_directory, filename)
+                    if os.path.isfile(filepath):
+                        # Get modification time
+                        mtime = os.path.getmtime(filepath)
+                        autosave_files.append((mtime, filepath))
+            
+            # Sort by modification time (newest first)
+            autosave_files.sort(reverse=True)
+            
+            # Remove files beyond the limit
+            files_to_remove = autosave_files[self.max_autosave_files:]
+            for _, filepath in files_to_remove:
+                try:
+                    os.remove(filepath)
+                    print(f"Removed old autosave: {os.path.basename(filepath)}")
+                except Exception as e:
+                    print(f"Could not remove old autosave {filepath}: {e}")
+                    
+        except Exception as e:
+            print(f"Error during autosave cleanup: {e}")
 
     def create_block_data_from_selected(self):
         """Create block data from the currently selected block"""
@@ -1660,9 +2233,28 @@ class OptimizedWorldPlanner:
         except Exception as e:
             print(f"Error uploading sprites: {e}")
 
+    def install_update(self):
+        """Install available update"""
+        if hasattr(self, 'update_manager') and self.update_manager.update_available:
+            print(f"Installing update {self.update_manager.latest_version}...")
+            if self.update_manager.download_and_install_update():
+                print("Update installed, restarting...")
+                self.running = False
+    
+    def get_current_version(self):
+        """Get current application version"""
+        return APP_VERSION
+
     def select_block(self, block):
         """Select a block for placement with optimizations"""
         self.selected_block = block
+        
+        # Auto-switch back from paste tool to previous tool when selecting new sprite
+        if self.active_tool == Tool.PASTE:
+            self.active_tool = self.previous_tool
+            # Update tool button states
+            for t, b in self.toolbuttons.items():
+                b['active'] = (t == self.active_tool)
         
         # FIXED: Calculate and store sprite grid size for efficient flood fill
         if block:
@@ -1793,6 +2385,8 @@ class OptimizedWorldPlanner:
             if button_data['rect'].collidepoint(adjusted_pos):
                 if 'is_search' in button_data and button_data.get('is_search', False):
                     self.activate_search()
+                elif 'is_custom_input' in button_data and button_data.get('is_custom_input', False):
+                    self.activate_brush_size_input()
                 elif 'action' in button_data and button_data['action']:
                     if button_data.get('enabled', True):
                         button_data['action']()
@@ -1869,7 +2463,8 @@ class OptimizedWorldPlanner:
                         'redo': "Redo last undone action (Ctrl+Y)",
                         'bg_prev': "Previous background",
                         'bg_next': "Next background",
-                        'bg_none': "No background"
+                        'bg_none': "No background",
+                        'brush_size_custom': "Custom brush size (type size and press Enter)"
                     }
                     
                     if name in tooltip_map:
@@ -2134,7 +2729,7 @@ class OptimizedWorldPlanner:
         pygame.draw.rect(surface, (255, 255, 0), selection_rect, 2)
 
     def draw_brush_preview(self, surface):
-        """Draw brush preview with optimizations"""
+        """Draw brush preview with optimized collision checking"""
         if self.active_tool not in [Tool.BRUSH, Tool.ERASE]:
             return
         
@@ -2144,59 +2739,98 @@ class OptimizedWorldPlanner:
         
         effective_tile_size = self.tile_size * self.zoom
         
-        tile_x = int((mouse_pos[0] - self.toolbar_width - self.resize_handle_width + self.camera_x) / effective_tile_size)
+        # FIXED: Use exact same coordinate calculation as actual placement
+        canvas_x = mouse_pos[0] - self.toolbar_width - self.resize_handle_width
+        
+        # Convert to integers first like in handle_mouse_click
+        camera_x_int = int(round(self.camera_x))
+        camera_y_int = int(round(self.camera_y))
+        
+        tile_x = int((canvas_x + self.camera_x) / effective_tile_size)
         tile_y = int((mouse_pos[1] + self.camera_y) / effective_tile_size)
         
-        radius = self.brush_size - 1
-        pixel_radius = radius * effective_tile_size
-        
-        center_x = tile_x * effective_tile_size - self.camera_x + self.toolbar_width + self.resize_handle_width + effective_tile_size // 2
-        center_y = tile_y * effective_tile_size - self.camera_y + effective_tile_size // 2
-        
-        color = (255, 255, 0) if self.active_tool == Tool.BRUSH else (255, 0, 0)
-        
-        if self.brush_shape == 'square':
-            rect_x = center_x - pixel_radius - effective_tile_size // 2
-            rect_y = center_y - pixel_radius - effective_tile_size // 2
-            rect_size = pixel_radius * 2 + effective_tile_size
-            brush_rect = pygame.Rect(rect_x, rect_y, rect_size, rect_size)
-            pygame.draw.rect(surface, color, brush_rect, 2)
+        if self.active_tool == Tool.BRUSH and self.selected_block:
+            # Use optimized collision preview
+            collision_info = self.brush_manager.get_brush_collision_preview(tile_x, tile_y)
+            
+            for (brush_x, brush_y), info in collision_info.items():
+                has_collision = info['has_collision']
+                aligned_x, aligned_y = info['aligned_pos']
+                sprite_bounds = info['sprite_bounds']
+                
+                # Color based on collision
+                outline_color = (255, 100, 0) if has_collision else (0, 255, 0)
+                
+                # Draw sprite bounds
+                for bound_dx, bound_dy in sprite_bounds:
+                    occupied_x = aligned_x + bound_dx
+                    occupied_y = aligned_y + bound_dy
+                    
+                    if self.is_valid_position(occupied_x, occupied_y):
+                        occupied_screen_x = int(occupied_x * effective_tile_size) - int(self.camera_x) + self.toolbar_width + self.resize_handle_width
+                        occupied_screen_y = int(occupied_y * effective_tile_size) - int(self.camera_y)
+                        
+                        # Outline thickness (origin gets thicker outline)
+                        outline_width = 3 if (bound_dx, bound_dy) == (0, 0) else 2
+                        preview_rect = pygame.Rect(occupied_screen_x, occupied_screen_y, effective_tile_size, effective_tile_size)
+                        pygame.draw.rect(surface, outline_color, preview_rect, outline_width)
         else:
-            pygame.draw.circle(surface, color, (center_x, center_y), pixel_radius + effective_tile_size // 2, 2)
+            # Erase mode - simple pattern
+            pattern = self.brush_manager.get_brush_pattern(self.brush_size, self.brush_shape)
+            
+            for dx, dy in pattern:
+                brush_tile_x, brush_tile_y = tile_x + dx, tile_y + dy
+                
+                if not self.is_valid_position(brush_tile_x, brush_tile_y):
+                    continue
+                if self.is_bedrock_position(brush_tile_y):
+                    continue
+                
+                screen_x = int(brush_tile_x * effective_tile_size) - camera_x_int + self.toolbar_width + self.resize_handle_width
+                screen_y = int(brush_tile_y * effective_tile_size) - camera_y_int
+                
+                preview_rect = pygame.Rect(screen_x, screen_y, effective_tile_size, effective_tile_size)
+                pygame.draw.rect(surface, (255, 0, 0), preview_rect, 2)
 
     def draw_toolbar(self, surface):
         """Draw the toolbar with advanced caching and optimizations"""
         # Draw toolbar background
         pygame.draw.rect(surface, (51, 51, 51), (0, 0, self.toolbar_width, self.screen_height))
-
+    
         # Draw title
-        title_surface, title_rect = self.font.render("World Planner", (255, 255, 255))
+        title_surface, title_rect = self.font.render("Crystal Realms World Planner", (255, 255, 255))
         surface.blit(title_surface, (self.toolbar_width // 2 - title_rect.width // 2, 10))
-
+    
         # Create clipping rect for toolbar content
         content_width = self.toolbar_width - self.scrollbar_width - 4
         toolbar_clip = pygame.Rect(0, 0, content_width, self.screen_height)
         previous_clip = surface.get_clip()
         surface.set_clip(toolbar_clip)
-
+    
         scroll_offset = -self.toolbar_scroll_y
-
+    
         # Optimized button drawing with culling
         self.draw_buttons_optimized(surface, scroll_offset)
         self.draw_tool_buttons_optimized(surface, scroll_offset)
         self.draw_block_buttons_optimized(surface, scroll_offset)
-
+    
         # Reset clip
         surface.set_clip(previous_clip)
-
+    
         # Draw scrollbar
         self.draw_scrollbar(surface)
-
-        # Draw layer indicator
-        layer_text = f"Layer: {self.active_layer.name.capitalize()}"
-        layer_surface, layer_rect = self.font_small.render(layer_text, (200, 200, 200))
-        surface.blit(layer_surface, (10, self.screen_height - 20))
-
+    
+        # Draw coordinate display
+        if self.show_coordinates:
+            coord_text = f"X: {self.mouse_grid_x}  Y: {self.mouse_grid_y}"
+            coord_surface, coord_rect = self.font_small.render(coord_text, (255, 255, 255))
+            surface.blit(coord_surface, (self.toolbar_width // 2.35 - title_rect.width // 2, 27.5))
+    
+        # Draw version display
+        version_text = f"v{APP_VERSION}"
+        version_surface, version_rect = self.font_small.render(version_text, (180, 180, 180))
+        surface.blit(version_surface, (self.toolbar_width // 0.79 - title_rect.width // 2, 10))
+    
         # Draw resize handle
         self.draw_resize_handle(surface)
 
@@ -2214,11 +2848,13 @@ class OptimizedWorldPlanner:
             is_disabled = not button_data.get('enabled', True)
             if is_disabled:
                 button_color, text_color = (40, 40, 40), (128, 128, 128)
+            elif button_data.get('update_button', False):
+                button_color, text_color = (34, 139, 34), (255, 255, 255)  # Green for updates
             elif name.startswith('category_'):
                 button_color, text_color = (85, 85, 85), (255, 255, 255)
             elif button_data.get('active', False):
                 button_color, text_color = (0, 102, 204), (255, 255, 255)
-            elif self.is_searching and name == 'search_bar':
+            elif (self.is_searching and name == 'search_bar') or (self.is_inputting_brush_size and name == 'brush_size_custom'):
                 button_color, text_color = (0, 120, 215), (255, 255, 255)
             else:
                 button_color, text_color = (68, 68, 68), (255, 255, 255)
@@ -2266,7 +2902,7 @@ class OptimizedWorldPlanner:
             pygame.draw.rect(surface, block['color'], inner_rect)
 
     def draw_text_button_content(self, surface, button_data, adjusted_rect, text_color, name):
-        """Draw text button content with search cursor"""
+        """Draw text button content with search cursor and custom brush input cursor"""
         text_surface, text_rect = self.font.render(button_data['text'], text_color)
         text_x = adjusted_rect.x + (adjusted_rect.width // 2) - (text_rect.width // 2)
         text_y = adjusted_rect.y + (adjusted_rect.height // 2) - (text_rect.height // 2)
@@ -2276,6 +2912,10 @@ class OptimizedWorldPlanner:
         # Draw search cursor if active
         if name == 'search_bar' and self.is_searching:
             self.draw_search_cursor(surface, text_x, text_y, text_rect, text_color)
+        
+        # Draw custom brush size cursor if active
+        elif name == 'brush_size_custom' and self.is_inputting_brush_size:
+            self.draw_brush_size_cursor(surface, text_x, text_y, text_rect, text_color)
 
     def draw_search_cursor(self, surface, text_x, text_y, text_rect, text_color):
         """Draw search cursor with optimized positioning"""
@@ -2287,6 +2927,24 @@ class OptimizedWorldPlanner:
         search_text_width = search_rect.width
 
         cursor_x = text_x + prefix_width + search_text_width
+        cursor_y = text_y
+        cursor_height = text_rect.height
+
+        if pygame.time.get_ticks() % 1000 < 500:  # Blink cursor
+            pygame.draw.line(surface, (255, 255, 255),
+                            (cursor_x, cursor_y),
+                            (cursor_x, cursor_y + cursor_height), 2)
+
+    def draw_brush_size_cursor(self, surface, text_x, text_y, text_rect, text_color):
+        """Draw custom brush size input cursor"""
+        prefix_text = "Custom: "
+        prefix_surface, prefix_rect = self.font.render(prefix_text, text_color)
+        prefix_width = prefix_rect.width
+        
+        brush_text_surface, brush_rect = self.font.render(self.custom_brush_text[:self.custom_brush_cursor_pos], text_color)
+        brush_text_width = brush_rect.width
+
+        cursor_x = text_x + prefix_width + brush_text_width
         cursor_y = text_y
         cursor_height = text_rect.height
 
@@ -2415,15 +3073,17 @@ class OptimizedWorldPlanner:
             self.handle_toolbar_click(pos, button)
             return
     
-        # If we're in search mode and click outside, deactivate it
-        if self.is_searching and pos[0] >= self.toolbar_width:
+        # If we're in search mode or brush input mode and click outside, deactivate it
+        if (self.is_searching or self.is_inputting_brush_size) and pos[0] >= self.toolbar_width:
             self.is_searching = False
+            self.is_inputting_brush_size = False
             return
     
         # Handle canvas clicks
         if self.canvas_rect.collidepoint(pos):
-            if self.is_searching:
+            if self.is_searching or self.is_inputting_brush_size:
                 self.is_searching = False
+                self.is_inputting_brush_size = False
     
             # Convert to tile coordinates
             effective_tile_size = self.tile_size * self.zoom
@@ -2511,8 +3171,13 @@ class OptimizedWorldPlanner:
                 elif self.active_tool == Tool.EYEDROPPER:
                     if not self.is_valid_position(tile_x, tile_y):
                         return
-    
-                    for layer_enum in [Layer.BACKGROUND, Layer.MIDGROUND]:
+                
+                    # Check active layer first, then other layer
+                    layers_to_check = [self.active_layer]
+                    other_layer = Layer.BACKGROUND if self.active_layer == Layer.MIDGROUND else Layer.MIDGROUND
+                    layers_to_check.append(other_layer)
+                    
+                    for layer_enum in layers_to_check:
                         origin_pos, block_data = self.tile_renderer.find_sprite_at_position(self, tile_x, tile_y, layer_enum)
                         if origin_pos is not None:
                             block_id = block_data.get('id', '')
@@ -2555,16 +3220,16 @@ class OptimizedWorldPlanner:
         """Copy selected blocks to clipboard"""
         if not self.selection:
             return
-
+    
         x, y, width, height = self.selection
-
+    
         self.clipboard = {
             Layer.BACKGROUND: {},
             Layer.MIDGROUND: {},
         }
-
+    
         total_copied = 0
-
+    
         for layer_enum, layer_dict in self.layers.items():
             for pos, block_data in layer_dict.items():
                 px, py = pos
@@ -2573,13 +3238,132 @@ class OptimizedWorldPlanner:
                     rel_y = py - y
                     self.clipboard[layer_enum][(rel_x, rel_y)] = block_data.copy()
                     total_copied += 1
-
+    
         if total_copied > 0:
+            # Store the current tool before switching to paste
+            if self.active_tool in [Tool.PLACE, Tool.BRUSH]:
+                self.previous_tool = self.active_tool
             self.active_tool = Tool.PASTE
             self.init_ui()
 
+    def flip_selection_horizontal(self):
+        """Flip selection horizontally (mirror left-right) - accounts for multi-tile sprites"""
+        if not self.selection:
+            return
+            
+        self.save_state_for_undo("Flip selection horizontally")
+        
+        x, y, width, height = self.selection
+        
+        # Step 1: Collect all sprites and calculate their bounds within the selection
+        sprites_to_move = []
+        positions_to_clear = []
+        
+        for layer_enum in [Layer.BACKGROUND, Layer.MIDGROUND]:
+            layer = self.layers[layer_enum]
+            for pos, block_data in list(layer.items()):
+                px, py = pos
+                if x <= px < x + width and y <= py < y + height:
+                    # Get sprite bounds to understand its footprint
+                    sprite = self.block_manager.get_sprite(block_data.get('id', ''))
+                    if sprite:
+                        tile_mode = block_data.get('tileMode', 'standard')
+                        sprite_bounds = self.tile_renderer.calculate_sprite_bounds(sprite, tile_mode)
+                        
+                        # Find the rightmost tile this sprite occupies
+                        max_dx = max(dx for dx, dy in sprite_bounds) if sprite_bounds else 0
+                        sprite_width = max_dx + 1
+                        
+                        # Calculate relative position within selection
+                        rel_x = px - x
+                        rel_y = py - y
+                        
+                        # Flip horizontally: place the sprite so its RIGHT edge is where the LEFT edge was
+                        flipped_rel_x = (width - 1) - (rel_x + sprite_width - 1)
+                        new_pos = (x + flipped_rel_x, y + rel_y)
+                    else:
+                        # Single tile sprite fallback
+                        rel_x = px - x
+                        rel_y = py - y
+                        flipped_rel_x = width - 1 - rel_x
+                        new_pos = (x + flipped_rel_x, y + rel_y)
+                    
+                    if self.is_valid_position(new_pos[0], new_pos[1]) and not self.is_bedrock_position(new_pos[1]):
+                        sprites_to_move.append((layer_enum, new_pos, block_data.copy()))
+                    
+                    positions_to_clear.append((layer_enum, pos))
+        
+        # Step 2: Clear all original positions
+        for layer_enum, pos in positions_to_clear:
+            if pos in self.layers[layer_enum]:
+                del self.layers[layer_enum][pos]
+        
+        # Step 3: Place all sprites in their new positions
+        affected_positions = []
+        for layer_enum, new_pos, block_data in sprites_to_move:
+            self.layers[layer_enum][new_pos] = block_data
+            affected_positions.append(new_pos)
+        
+        # Step 4: Update chunks
+        if affected_positions:
+            self.chunk_manager.force_update_affected_chunks(affected_positions)
+            self.force_immediate_chunk_update()
+    
+    def flip_selection_vertical(self):
+        """Flip selection vertically (mirror top-bottom) - accounts for multi-tile sprites"""
+        if not self.selection:
+            return
+            
+        self.save_state_for_undo("Flip selection vertically")
+        
+        x, y, width, height = self.selection
+        
+        # Step 1: Collect all sprites and find the range of Y positions
+        sprites_to_move = []
+        positions_to_clear = []
+        y_positions = []
+        
+        for layer_enum in [Layer.BACKGROUND, Layer.MIDGROUND]:
+            layer = self.layers[layer_enum]
+            for pos, block_data in list(layer.items()):
+                px, py = pos
+                if x <= px < x + width and y <= py < y + height:
+                    rel_x = px - x
+                    rel_y = py - y
+                    y_positions.append(rel_y)
+                    sprites_to_move.append((layer_enum, pos, block_data.copy(), rel_x, rel_y))
+                    positions_to_clear.append((layer_enum, pos))
+        
+        if not sprites_to_move:
+            return
+        
+        # Step 2: Find the Y range of the current sprites
+        min_y = min(y_positions)
+        max_y = max(y_positions)
+        
+        # Step 3: Clear all original positions
+        for layer_enum, pos in positions_to_clear:
+            if pos in self.layers[layer_enum]:
+                del self.layers[layer_enum][pos]
+        
+        # Step 4: Place sprites flipped around the center of their current range
+        affected_positions = []
+        for layer_enum, original_pos, block_data, rel_x, rel_y in sprites_to_move:
+            # Flip within the sprite arrangement's own range
+            flipped_rel_y = max_y - (rel_y - min_y)
+            new_pos = (x + rel_x, y + flipped_rel_y)
+            
+            if self.is_valid_position(new_pos[0], new_pos[1]) and not self.is_bedrock_position(new_pos[1]):
+                self.layers[layer_enum][new_pos] = block_data
+                affected_positions.append(new_pos)
+        
+        # Step 5: Update chunks
+        if affected_positions:
+            self.chunk_manager.force_update_affected_chunks(affected_positions)
+            self.force_immediate_chunk_update()
+
     def paste_selection(self, target_x, target_y):
-        """Paste clipboard at target position using bottom-left as origin"""
+        """Paste clipboard at target position using bottom-left as origin with collision detection"""
         if not self.clipboard:
             return
     
@@ -2591,7 +3375,8 @@ class OptimizedWorldPlanner:
         if not all_positions:
             return
         
-        # Calculate bounds (bottom-left origin means we want max_rel_y)
+        # Find the bottom-left corner of the selection
+        min_rel_x = min(rel_x for rel_x, rel_y in all_positions)
         max_rel_y = max(rel_y for rel_x, rel_y in all_positions)
         
         affected_positions = []
@@ -2599,13 +3384,23 @@ class OptimizedWorldPlanner:
         for layer_enum, layer_dict in self.clipboard.items():
             for rel_pos, block_data in layer_dict.items():
                 rel_x, rel_y = rel_pos
-                # Adjust for bottom-left origin
-                world_x = target_x + rel_x
-                world_y = target_y + (max_rel_y - rel_y)
+                # Place relative to bottom-left corner
+                world_x = target_x + (rel_x - min_rel_x)
+                world_y = target_y - (max_rel_y - rel_y)
     
-                if self.is_valid_position(world_x, world_y) and not self.is_bedrock_position(world_y):
-                    self.layers[layer_enum][(world_x, world_y)] = block_data.copy()
-                    affected_positions.append((world_x, world_y))
+                if (self.is_valid_position(world_x, world_y) and 
+                    not self.is_bedrock_position(world_y)):
+                    
+                    # Check for collision before placing
+                    if not self.tile_renderer.check_placement_collision(self, world_x, world_y, block_data, layer_enum):
+                        self.layers[layer_enum][(world_x, world_y)] = block_data.copy()
+                        affected_positions.append((world_x, world_y))
+        
+        # Clear selection after pasting
+        if self.selection:
+            self.selection = None
+            self.selection_start = None
+            self.init_ui()
         
         # Force immediate chunk updates for all affected positions
         if affected_positions:
@@ -2739,12 +3534,13 @@ class OptimizedWorldPlanner:
             print(f"Placed {len(valid_positions)} sprites")
             
         else:
-            # STEP 4: Batch erase mode
+            # STEP 4: Batch erase mode - FIXED: Extra bedrock protection
             layer_dict = self.layers[self.active_layer]
             positions_to_remove = []
             
             for x, y in matching_tiles:
-                if (x, y) in layer_dict:
+                # FIXED: Double-check bedrock protection for erase mode
+                if (x, y) in layer_dict and not self.is_bedrock_position(y):
                     positions_to_remove.append((x, y))
             
             # Batch remove
@@ -2775,9 +3571,13 @@ class OptimizedWorldPlanner:
         if self.is_searching:
             self.handle_search_input(key)
             return
-
+        
+        if self.is_inputting_brush_size:
+            self.handle_brush_size_input(key)
+            return
+    
         previous_tool = self.active_tool
-
+    
         # Tool shortcuts
         tool_map = {
             pygame.K_p: Tool.PLACE,
@@ -2790,6 +3590,9 @@ class OptimizedWorldPlanner:
         }
         
         if key in tool_map:
+            # Store previous tool if switching away from place or brush
+            if self.active_tool in [Tool.PLACE, Tool.BRUSH]:
+                self.previous_tool = self.active_tool
             self.active_tool = tool_map[key]
         
         # Clear selection if tool changed and new tool is not SELECT
@@ -2823,7 +3626,7 @@ class OptimizedWorldPlanner:
         # Brush size
         elif key == pygame.K_PLUS or key == pygame.K_EQUALS:
             if self.active_tool in [Tool.BRUSH, Tool.ERASE]:
-                self.set_brush_size(min(self.brush_size + 1, 10))
+                self.set_brush_size(min(self.brush_size + 1, 50))
         elif key == pygame.K_MINUS:
             if self.active_tool in [Tool.BRUSH, Tool.ERASE]:
                 self.set_brush_size(max(self.brush_size - 1, 1))
@@ -2890,6 +3693,53 @@ class OptimizedWorldPlanner:
 
         self.init_ui()
 
+    def handle_brush_size_input(self, key):
+        """Handle keyboard input for custom brush size"""
+        if key == pygame.K_BACKSPACE:
+            if len(self.custom_brush_text) > 0 and self.custom_brush_cursor_pos > 0:
+                self.custom_brush_text = self.custom_brush_text[:self.custom_brush_cursor_pos - 1] + self.custom_brush_text[self.custom_brush_cursor_pos:]
+                self.custom_brush_cursor_pos -= 1
+        elif key == pygame.K_DELETE:
+            if self.custom_brush_cursor_pos < len(self.custom_brush_text):
+                self.custom_brush_text = self.custom_brush_text[:self.custom_brush_cursor_pos] + self.custom_brush_text[self.custom_brush_cursor_pos + 1:]
+        elif key == pygame.K_LEFT:
+            self.custom_brush_cursor_pos = max(0, self.custom_brush_cursor_pos - 1)
+        elif key == pygame.K_RIGHT:
+            self.custom_brush_cursor_pos = min(len(self.custom_brush_text), self.custom_brush_cursor_pos + 1)
+        elif key == pygame.K_RETURN:
+            # Apply the custom brush size
+            try:
+                size = int(self.custom_brush_text) if self.custom_brush_text else 1
+                size = max(1, min(50, size))  # Clamp between 1 and 50
+                self.set_brush_size(size)
+            except ValueError:
+                pass  # Invalid input, ignore
+            self.is_inputting_brush_size = False
+            self.init_ui()
+        elif key == pygame.K_ESCAPE:
+            self.is_inputting_brush_size = False
+            self.init_ui()
+        else:
+            # Only allow digits
+            try:
+                if 48 <= key <= 57:  # 0-9 keys
+                    char = chr(key)
+                    # Prevent input if it would exceed 2 digits or result in >50
+                    new_text = self.custom_brush_text[:self.custom_brush_cursor_pos] + char + self.custom_brush_text[self.custom_brush_cursor_pos:]
+                    if len(new_text) <= 2:
+                        try:
+                            if int(new_text) <= 50:
+                                self.custom_brush_text = new_text
+                                self.custom_brush_cursor_pos += 1
+                        except ValueError:
+                            pass
+            except ValueError:
+                pass
+
+        # Update button text
+        if 'brush_size_custom' in self.buttons:
+            self.buttons['brush_size_custom']['text'] = f"Custom: {self.custom_brush_text}"
+
     def cycle_block_state(self, block, direction=1):
         """Cycle through available states for a multi-state block"""
         if 'state' in block and 'stateCount' in block:
@@ -2921,9 +3771,27 @@ class OptimizedWorldPlanner:
             self.init_ui()
 
     def handle_mouse_motion(self, pos):
-        """Handle mouse motion with optimizations"""
+        """Handle mouse motion with optimizations and coordinate tracking"""
         # Handle tooltip updates
         self.handle_toolbar_hover(pos)
+        
+        # Efficient coordinate calculation for grid display
+        if self.canvas_rect.collidepoint(pos):
+            effective_tile_size = self.tile_size * self.zoom
+            canvas_x = pos[0] - self.toolbar_width - self.resize_handle_width
+            
+            # Convert to world grid coordinates
+            world_tile_x = int((canvas_x + self.camera_x) / effective_tile_size)
+            world_tile_y = int((pos[1] + self.camera_y) / effective_tile_size)
+            
+            # Convert to user coordinates (0,0 at bottom-left excluding bedrock)
+            if self.is_valid_position(world_tile_x, world_tile_y):
+                self.mouse_grid_x = world_tile_x
+                # Flip Y coordinate: 0 at bottom (excluding bedrock)
+                usable_height = self.world_height - self.bedrock_rows
+                self.mouse_grid_y = (usable_height - 1) - world_tile_y
+                # Clamp to valid range
+                self.mouse_grid_y = max(0, self.mouse_grid_y)
         
         # Handle scrollbar dragging
         if self.is_dragging_scrollbar:
@@ -2989,12 +3857,13 @@ class OptimizedWorldPlanner:
         else:
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
     
-        # Handle brush painting while dragging - ENHANCED FOR IMMEDIATE UPDATES
+        # Handle brush painting while dragging
         if pygame.mouse.get_pressed()[0] and self.canvas_rect.collidepoint(pos):
             if self.active_tool in [Tool.BRUSH, Tool.ERASE]:
                 effective_tile_size = self.tile_size * self.zoom
-                tile_x = int((pos[0] - self.toolbar_width - self.resize_handle_width + self.camera_x) / effective_tile_size)
-                tile_y = int((pos[1] + self.camera_y) / effective_tile_size)
+                canvas_x = pos[0] - self.toolbar_width - self.resize_handle_width
+                tile_x = int((canvas_x + self.camera_x) / effective_tile_size)  # Ensure same as preview
+                tile_y = int((pos[1] + self.camera_y) / effective_tile_size)    # Ensure same as preview
     
                 if self.is_valid_position(tile_x, tile_y):
                     if self.active_tool == Tool.BRUSH and self.selected_block:
@@ -3155,8 +4024,28 @@ class OptimizedWorldPlanner:
         """Optimized main application loop with comprehensive performance monitoring"""
         print("🚀 Starting optimized main loop...")
         
+        # Initialize update manager 
+        try:
+            self.update_manager = UpdateManager(APP_VERSION)
+            self.update_manager.check_for_updates()
+            self.last_update_state = False
+            print("✅ Update manager initialized")
+        except Exception as e:
+            print(f"⚠️ Update manager failed to initialize: {e}")
+            self.update_manager = None
+            self.last_update_state = False
+        
         while self.running:
             frame_start_time = pygame.time.get_ticks()
+            
+            # Check for update status changes and refresh UI if needed
+            if (self.update_manager and 
+                self.update_manager.check_complete and 
+                self.update_manager.update_available != self.last_update_state):
+                self.last_update_state = self.update_manager.update_available
+                if self.update_manager.update_available:
+                    print(f"🔄 Update detected, refreshing UI...")
+                    self.init_ui()
             
             # Handle events with batching
             events = pygame.event.get()
@@ -3182,6 +4071,13 @@ class OptimizedWorldPlanner:
                     self.handle_mouse_wheel(event)
                 elif event.type == pygame.VIDEORESIZE:
                     self.handle_window_resize(event)
+            
+            # Handle autosave timer
+            if self.autosave_directory:
+                self.autosave_timer += self.clock.get_time()
+                if self.autosave_timer >= self.autosave_interval:
+                    self.perform_autosave()
+                    self.autosave_timer = 0
             
             # UPDATE TOOLTIPS EVEN WITHOUT MOUSE MOVEMENT
             mouse_pos = pygame.mouse.get_pos()
@@ -3221,10 +4117,10 @@ class OptimizedWorldPlanner:
                 self.performance_stats['fps'] = avg_fps
                 
                 print(f"🔥 Performance: {avg_fps:.1f} FPS | "
-                      f"Frame: {frame_time}ms | "
-                      f"Render: {self.performance_stats['render_time']}ms | "
-                      f"Chunks/frame: {self.chunk_manager.max_chunks_per_frame} | "
-                      f"Quality: {self.performance_stats['adaptive_quality']:.2f}")
+                    f"Frame: {frame_time}ms | "
+                    f"Render: {self.performance_stats['render_time']}ms | "
+                    f"Chunks/frame: {self.chunk_manager.max_chunks_per_frame} | "
+                    f"Quality: {self.performance_stats['adaptive_quality']:.2f}")
                 
                 # Print cache stats
                 print(f"📊 Cache Stats: {self.tooltip_manager.get_cache_stats()}")
@@ -3236,6 +4132,11 @@ class OptimizedWorldPlanner:
             # Update display with VSync if available
             pygame.display.flip()
             self.clock.tick(60)  # Target 60 FPS
+        
+        # Perform final autosave on exit
+        if self.autosave_directory:
+            print("Performing final autosave before exit...")
+            self.perform_autosave()
         
         print("🛑 Shutting down optimized World Planner...")
         print(f"📈 Final Performance Stats:")
