@@ -191,6 +191,11 @@ class OptimizedTileRenderer:
         else:
             cache_key = (tile_x, tile_y, block_id, tile_mode)
         
+        # FIXED: Include state in cache key for multi-state blocks
+        if tile_mode in ['2state', '4state']:
+            state = block_data.get('state', 0)
+            cache_key = cache_key + (state,)
+        
         if cache_key in self.tile_info_cache:
             return self.tile_info_cache[cache_key]
         
