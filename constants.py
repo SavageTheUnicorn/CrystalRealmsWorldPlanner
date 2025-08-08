@@ -1,3 +1,6 @@
+# Application version
+APP_VERSION = "21"
+
 from enum import Enum
 
 
